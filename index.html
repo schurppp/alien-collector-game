@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alien Sammler - 3D Spiel</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        
+        <!-- Crosshair for First-Person -->
+        <div id="crosshair"></div>
+        
+        <!-- Pointer Lock Hint -->
+        <div id="pointer-lock-hint">🖱️ Klicke ins Spiel um die Maussteuerung zu aktivieren (ESC zum Beenden)</div>
+        
+        <!-- HUD Overlay (im Spiel) -->
+        <div id="hud" class="hidden">
+            <div id="alien-counter">
+                <span>🛸 Aliens: </span>
+                <span id="alien-count">0</span>
+            </div>
+            <div id="stamina-bar-container">
+                <div id="stamina-bar"></div>
+                <span id="stamina-label">🏃 Ausdauer</span>
+            </div>
+            <div id="coins-display">
+                <span>💰 </span>
+                <span id="coins-count">0</span>
+            </div>
+            <div id="interaction-hint"></div>
+            <div id="status-message"></div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- HAUPTMENÜ -->
+        <!-- ====================================== -->
+        <div id="main-menu">
+            <!-- Profil (oben links) -->
+            <div id="menu-profile">
+                <div id="profile-avatar">👽</div>
+                <div id="profile-info">
+                    <div id="profile-name">Spieler</div>
+                    <div id="profile-level">Level <span id="level-number">1</span></div>
+                    <div id="profile-xp-bar">
+                        <div id="profile-xp-fill"></div>
+                    </div>
+                    <div id="profile-xp-text">0 / 100 XP</div>
+                </div>
+            </div>
+
+            <!-- Einstellungen Button (oben rechts) -->
+            <div id="menu-settings-btn" onclick="openSettings()">
+                ⚙️
+            </div>
+
+            <!-- Titel und Hauptinhalt (Mitte) -->
+            <div id="menu-center">
+                <h1 id="menu-title">👽 ALIEN SAMMLER</h1>
+                <p id="menu-subtitle">Sammle Aliens und bringe sie sicher zur Insel!</p>
+                
+                <div id="menu-buttons">
+                    <button id="play-button" class="menu-btn primary" onclick="startGame()">
+                        ▶️ SPIELEN
+                    </button>
+                    <button id="shop-button" class="menu-btn" onclick="openShop()">
+                        🛒 SHOP
+                    </button>
+                </div>
+
+                <!-- Stats -->
+                <div id="menu-stats">
+                    <div class="stat-item">
+                        <span class="stat-icon">🏆</span>
+                        <span class="stat-value" id="stat-highscore">0</span>
+                        <span class="stat-label">Highscore</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">👽</span>
+                        <span class="stat-value" id="stat-total-aliens">0</span>
+                        <span class="stat-label">Aliens gefangen</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-icon">🎮</span>
+                        <span class="stat-value" id="stat-games-played">0</span>
+                        <span class="stat-label">Spiele</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tutorial Button (unten links) -->
+            <button id="menu-tutorial-btn" onclick="openTutorial()">
+                ❓ Wie spielt man?
+            </button>
+
+            <!-- Version (unten rechts) -->
+            <div id="menu-version">v1.0</div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- EINSTELLUNGEN POPUP -->
+        <!-- ====================================== -->
+        <div id="settings-popup" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>⚙️ Einstellungen</h2>
+                    <button class="popup-close" onclick="closeSettings()">✕</button>
+                </div>
+                <div class="popup-body">
+                    <!-- Performance -->
+                    <div class="settings-section">
+                        <h3>🖥️ Performance</h3>
+                        <div class="setting-item">
+                            <label>Grafikqualität</label>
+                            <select id="setting-quality" onchange="updateSettings()">
+                                <option value="low">Niedrig</option>
+                                <option value="medium" selected>Mittel</option>
+                                <option value="high">Hoch</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>Sichtweite</label>
+                            <input type="range" id="setting-viewdistance" min="200" max="800" value="500" onchange="updateSettings()">
+                            <span id="viewdistance-value">500</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Schatten</label>
+                            <input type="checkbox" id="setting-shadows" checked onchange="updateSettings()">
+                        </div>
+                    </div>
+
+                    <!-- Audio -->
+                    <div class="settings-section">
+                        <h3>🔊 Audio</h3>
+                        <div class="setting-item">
+                            <label>Master-Lautstärke</label>
+                            <input type="range" id="setting-master" min="0" max="100" value="80" onchange="updateSettings()">
+                            <span id="master-value">80%</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Musik</label>
+                            <input type="range" id="setting-music" min="0" max="100" value="50" onchange="updateSettings()">
+                            <span id="music-value">50%</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Soundeffekte</label>
+                            <input type="range" id="setting-sfx" min="0" max="100" value="70" onchange="updateSettings()">
+                            <span id="sfx-value">70%</span>
+                        </div>
+                    </div>
+
+                    <!-- Steuerung -->
+                    <div class="settings-section">
+                        <h3>🎮 Steuerung</h3>
+                        <div class="setting-item">
+                            <label>Mausempfindlichkeit</label>
+                            <input type="range" id="setting-sensitivity" min="1" max="10" value="5" onchange="updateSettings()">
+                            <span id="sensitivity-value">5</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Y-Achse invertieren</label>
+                            <input type="checkbox" id="setting-invert-y" onchange="updateSettings()">
+                        </div>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="menu-btn" onclick="resetSettings()">Zurücksetzen</button>
+                    <button class="menu-btn primary" onclick="closeSettings()">Speichern</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- SHOP POPUP -->
+        <!-- ====================================== -->
+        <div id="shop-popup" class="popup hidden">
+            <div class="popup-content large">
+                <div class="popup-header">
+                    <h2>🛒 Shop</h2>
+                    <div id="shop-coins">💰 <span id="shop-coins-amount">0</span></div>
+                    <button class="popup-close" onclick="closeShop()">✕</button>
+                </div>
+                <div class="popup-body">
+                    <!-- Shop Tabs -->
+                    <div class="shop-tabs">
+                        <button class="shop-tab active" onclick="switchShopTab('skins')">🎨 Skins</button>
+                        <button class="shop-tab" onclick="switchShopTab('upgrades')">⬆️ Upgrades</button>
+                        <button class="shop-tab" onclick="switchShopTab('extras')">✨ Extras</button>
+                    </div>
+
+                    <!-- Skins Tab -->
+                    <div id="shop-skins" class="shop-content active">
+                        <div class="shop-grid">
+                            <div class="shop-item owned" data-id="skin-default">
+                                <div class="item-preview">👽</div>
+                                <div class="item-name">Standard</div>
+                                <div class="item-status">✓ Im Besitz</div>
+                            </div>
+                            <div class="shop-item" data-id="skin-gold" onclick="buyItem('skin-gold', 500)">
+                                <div class="item-preview" style="color: gold;">👽</div>
+                                <div class="item-name">Gold Alien</div>
+                                <div class="item-price">💰 500</div>
+                            </div>
+                            <div class="shop-item" data-id="skin-neon" onclick="buyItem('skin-neon', 750)">
+                                <div class="item-preview" style="color: #0ff; text-shadow: 0 0 10px #0ff;">👽</div>
+                                <div class="item-name">Neon</div>
+                                <div class="item-price">💰 750</div>
+                            </div>
+                            <div class="shop-item" data-id="skin-fire" onclick="buyItem('skin-fire', 1000)">
+                                <div class="item-preview" style="color: #f50;">🔥👽</div>
+                                <div class="item-name">Feuer</div>
+                                <div class="item-price">💰 1000</div>
+                            </div>
+                            <div class="shop-item" data-id="skin-ice" onclick="buyItem('skin-ice', 1000)">
+                                <div class="item-preview" style="color: #5cf;">❄️👽</div>
+                                <div class="item-name">Eis</div>
+                                <div class="item-price">💰 1000</div>
+                            </div>
+                            <div class="shop-item locked" data-id="skin-rainbow">
+                                <div class="item-preview">🌈👽</div>
+                                <div class="item-name">Regenbogen</div>
+                                <div class="item-status">🔒 Level 10</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Upgrades Tab -->
+                    <div id="shop-upgrades" class="shop-content">
+                        <div class="shop-grid">
+                            <div class="shop-item upgrade" data-id="bag-size" onclick="buyUpgrade('bag-size')">
+                                <div class="item-preview">🎒</div>
+                                <div class="item-name">Größerer Beutel</div>
+                                <div class="item-desc">+2 Aliens Kapazität</div>
+                                <div class="item-level">Level <span id="bag-level">1</span>/5</div>
+                                <div class="item-price">💰 <span id="bag-price">200</span></div>
+                            </div>
+                            <div class="shop-item upgrade" data-id="prison-slots" onclick="buyUpgrade('prison-slots')">
+                                <div class="item-preview">🔒</div>
+                                <div class="item-name">Mehr Gefängnisse</div>
+                                <div class="item-desc">+2 Käfige im Haus</div>
+                                <div class="item-level">Level <span id="prison-level">1</span>/3</div>
+                                <div class="item-price">💰 <span id="prison-price">500</span></div>
+                            </div>
+                            <div class="shop-item upgrade" data-id="speed-boost" onclick="buyUpgrade('speed-boost')">
+                                <div class="item-preview">🏃</div>
+                                <div class="item-name">Schneller Laufen</div>
+                                <div class="item-desc">+10% Geschwindigkeit</div>
+                                <div class="item-level">Level <span id="speed-level">1</span>/5</div>
+                                <div class="item-price">💰 <span id="speed-price">300</span></div>
+                            </div>
+                            <div class="shop-item upgrade" data-id="stamina-boost" onclick="buyUpgrade('stamina-boost')">
+                                <div class="item-preview">💨</div>
+                                <div class="item-name">Mehr Ausdauer</div>
+                                <div class="item-desc">+20% Max-Ausdauer</div>
+                                <div class="item-level">Level <span id="stamina-level">1</span>/5</div>
+                                <div class="item-price">💰 <span id="stamina-price">250</span></div>
+                            </div>
+                            <div class="shop-item upgrade" data-id="boat-speed" onclick="buyUpgrade('boat-speed')">
+                                <div class="item-preview">🚤</div>
+                                <div class="item-name">Schnelleres Boot</div>
+                                <div class="item-desc">+25% Bootgeschwindigkeit</div>
+                                <div class="item-level">Level <span id="boat-level">1</span>/3</div>
+                                <div class="item-price">💰 <span id="boat-price">400</span></div>
+                            </div>
+                            <div class="shop-item upgrade" data-id="alien-radar" onclick="buyUpgrade('alien-radar')">
+                                <div class="item-preview">📡</div>
+                                <div class="item-name">Alien-Radar</div>
+                                <div class="item-desc">Zeigt Aliens auf Karte</div>
+                                <div class="item-level">Level <span id="radar-level">0</span>/1</div>
+                                <div class="item-price">💰 <span id="radar-price">1000</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Extras Tab -->
+                    <div id="shop-extras" class="shop-content">
+                        <div class="shop-grid">
+                            <div class="shop-item" data-id="coin-pack-1" onclick="buyCoins(100, 0.99)">
+                                <div class="item-preview">💰</div>
+                                <div class="item-name">100 Münzen</div>
+                                <div class="item-price real-money">0,99 €</div>
+                            </div>
+                            <div class="shop-item popular" data-id="coin-pack-2" onclick="buyCoins(500, 3.99)">
+                                <div class="item-badge">BELIEBT</div>
+                                <div class="item-preview">💰💰</div>
+                                <div class="item-name">500 Münzen</div>
+                                <div class="item-price real-money">3,99 €</div>
+                            </div>
+                            <div class="shop-item" data-id="coin-pack-3" onclick="buyCoins(1200, 7.99)">
+                                <div class="item-badge">+20% BONUS</div>
+                                <div class="item-preview">💰💰💰</div>
+                                <div class="item-name">1200 Münzen</div>
+                                <div class="item-price real-money">7,99 €</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- TUTORIAL POPUP -->
+        <!-- ====================================== -->
+        <div id="tutorial-popup" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>❓ Anleitung</h2>
+                    <button class="popup-close" onclick="closeTutorial()">✕</button>
+                </div>
+                <div class="popup-body tutorial">
+                    <div class="tutorial-section">
+                        <h3>🎯 Ziel des Spiels</h3>
+                        <p>Sammle alle Aliens in der Stadt und bringe sie sicher zu deinem Haus auf der Insel. Aber pass auf - die Polizei will dich aufhalten!</p>
+                    </div>
+
+                    <div class="tutorial-section">
+                        <h3>🎮 Steuerung</h3>
+                        <div class="control-list">
+                            <div class="control-item">
+                                <span class="key">W A S D</span>
+                                <span>Bewegen</span>
+                            </div>
+                            <div class="control-item">
+                                <span class="key">MAUS</span>
+                                <span>Umsehen</span>
+                            </div>
+                            <div class="control-item">
+                                <span class="key">SHIFT</span>
+                                <span>Sprinten</span>
+                            </div>
+                            <div class="control-item">
+                                <span class="key">LEERTASTE</span>
+                                <span>Springen</span>
+                            </div>
+                            <div class="control-item">
+                                <span class="key">E</span>
+                                <span>Interagieren</span>
+                            </div>
+                            <div class="control-item">
+                                <span class="key">ESC</span>
+                                <span>Pause</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tutorial-section">
+                        <h3>📋 Spielablauf</h3>
+                        <ol class="steps-list">
+                            <li>🏝️ Du startest auf deiner Insel vor dem Haus</li>
+                            <li>🚤 Geh zum Boot am Steg und drücke E</li>
+                            <li>🌆 Fahre zum Festland (Stadt)</li>
+                            <li>👽 Suche grün leuchtende Aliens und sammle sie mit E</li>
+                            <li>🚔 Vorsicht! Mit Aliens jagt die Polizei dich!</li>
+                            <li>🚤 Kehre zum Boot zurück und fahre zur Insel</li>
+                            <li>🏠 Geh ins Haus - Aliens werden eingesperrt!</li>
+                        </ol>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="menu-btn primary" onclick="closeTutorial()">Verstanden!</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- GAME OVER SCREEN -->
+        <!-- ====================================== -->
+        <div id="game-over-screen" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>🚔 Erwischt!</h2>
+                </div>
+                <div class="popup-body centered">
+                    <p>Die Polizei hat dich gefangen!</p>
+                    <div class="result-stats">
+                        <div class="result-stat">
+                            <span>Gesammelte Aliens:</span>
+                            <span id="result-aliens">0</span>
+                        </div>
+                        <div class="result-stat">
+                            <span>Verdiente Münzen:</span>
+                            <span id="result-coins">+0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="menu-btn" onclick="backToMenu()">Zum Menü</button>
+                    <button class="menu-btn primary" id="restart-button">Nochmal</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====================================== -->
+        <!-- WIN SCREEN -->
+        <!-- ====================================== -->
+        <div id="win-screen" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>🎉 Gewonnen!</h2>
+                </div>
+                <div class="popup-body centered">
+                    <p>Du hast alle Aliens sicher zur Insel gebracht!</p>
+                    <div class="result-stats">
+                        <div class="result-stat">
+                            <span>Gefangene Aliens:</span>
+                            <span id="win-aliens">10</span>
+                        </div>
+                        <div class="result-stat bonus">
+                            <span>Verdiente Münzen:</span>
+                            <span id="win-coins">+100</span>
+                        </div>
+                        <div class="result-stat">
+                            <span>+XP:</span>
+                            <span id="win-xp">+50</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="menu-btn" onclick="backToMenu()">Zum Menü</button>
+                    <button class="menu-btn primary" id="play-again-button">Nochmal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Menu & UI Scripts -->
+    <script src="js/menu.js"></script>
+    
+    <!-- Game Scripts -->
+    <script src="js/game.js"></script>
+</body>
+</html>
