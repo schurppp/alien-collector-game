@@ -55,6 +55,7 @@ const upgradePrices = {
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     loadPlayerData();
+    window.currentSettings = playerData.settings;
     updateMenuUI();
     setupSettingsListeners();
 });
@@ -151,9 +152,20 @@ function updateUpgradeUI() {
 // ==========================================
 // MENÜ AKTIONEN
 // ==========================================
+function playUiSound(name) {
+    if (typeof window.ensureAudioReady === 'function') {
+        window.ensureAudioReady();
+    }
+    if (window.audioManager) {
+        window.audioManager.playSfx(name || 'click');
+    }
+}
+
 function startGame() {
     document.getElementById('main-menu').classList.add('hidden');
     document.getElementById('hud').classList.remove('hidden');
+
+    playUiSound('click');
     
     playerData.gamesPlayed++;
     savePlayerData();
@@ -179,12 +191,16 @@ function backToMenu() {
 function openSettings() {
     document.getElementById('settings-popup').classList.remove('hidden');
     loadSettingsUI();
+
+    playUiSound('click');
 }
 
 function closeSettings() {
     document.getElementById('settings-popup').classList.add('hidden');
     savePlayerData();
     applySettings();
+
+    playUiSound('click');
 }
 
 function loadSettingsUI() {
@@ -222,6 +238,8 @@ function updateSettings() {
     document.getElementById('music-value').textContent = playerData.settings.musicVolume + '%';
     document.getElementById('sfx-value').textContent = playerData.settings.sfxVolume + '%';
     document.getElementById('sensitivity-value').textContent = playerData.settings.sensitivity;
+
+    window.currentSettings = playerData.settings;
 }
 
 function resetSettings() {
@@ -236,6 +254,7 @@ function resetSettings() {
         invertY: false
     };
     loadSettingsUI();
+    window.currentSettings = playerData.settings;
 }
 
 function applySettings() {
@@ -243,6 +262,7 @@ function applySettings() {
     if (typeof applyGameSettings === 'function') {
         applyGameSettings(playerData.settings);
     }
+    window.currentSettings = playerData.settings;
 }
 
 function setupSettingsListeners() {
@@ -260,10 +280,14 @@ function openShop() {
     document.getElementById('shop-popup').classList.remove('hidden');
     document.getElementById('shop-coins-amount').textContent = playerData.coins;
     updateUpgradeUI();
+
+    playUiSound('click');
 }
 
 function closeShop() {
     document.getElementById('shop-popup').classList.add('hidden');
+
+    playUiSound('click');
 }
 
 function switchShopTab(tabName) {
@@ -274,16 +298,20 @@ function switchShopTab(tabName) {
     // Gewählten Tab aktivieren
     document.querySelector(`[onclick="switchShopTab('${tabName}')"]`).classList.add('active');
     document.getElementById(`shop-${tabName}`).classList.add('active');
+
+    playUiSound('click');
 }
 
 function buyItem(itemId, price) {
     if (playerData.ownedSkins.includes(itemId)) {
         showNotification('Du besitzt dieses Item bereits!', 'info');
+        playUiSound('error');
         return;
     }
     
     if (playerData.coins < price) {
         showNotification('Nicht genug Münzen!', 'error');
+        playUiSound('error');
         return;
     }
     
@@ -294,6 +322,7 @@ function buyItem(itemId, price) {
     updateUpgradeUI();
     
     showNotification('Skin gekauft! 🎉', 'success');
+    playUiSound('deliver');
 }
 
 function buyUpgrade(upgradeId) {
@@ -313,6 +342,7 @@ function buyUpgrade(upgradeId) {
     
     if (currentLevel >= upgrade.max) {
         showNotification('Maximales Level erreicht!', 'info');
+        playUiSound('error');
         return;
     }
     
@@ -321,6 +351,7 @@ function buyUpgrade(upgradeId) {
     
     if (playerData.coins < price) {
         showNotification('Nicht genug Münzen!', 'error');
+        playUiSound('error');
         return;
     }
     
@@ -330,11 +361,14 @@ function buyUpgrade(upgradeId) {
     updateMenuUI();
     
     showNotification('Upgrade gekauft! ⬆️', 'success');
+    playUiSound('deliver');
 }
 
 function buyCoins(amount, price) {
     // Simulation - In einer echten App würde hier ein Zahlungsprozess starten
     showNotification(`${amount} Münzen würden ${price}€ kosten (Demo)`, 'info');
+
+    playUiSound('click');
     
     // Demo: Gratis Münzen geben
     playerData.coins += amount;
@@ -347,10 +381,14 @@ function buyCoins(amount, price) {
 // ==========================================
 function openTutorial() {
     document.getElementById('tutorial-popup').classList.remove('hidden');
+
+    playUiSound('click');
 }
 
 function closeTutorial() {
     document.getElementById('tutorial-popup').classList.add('hidden');
+
+    playUiSound('click');
 }
 
 // ==========================================

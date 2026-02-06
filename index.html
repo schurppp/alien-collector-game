@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Alien Sammler - 3D Spiel</title>
+    <title>Catch the Kids - 3D Spiel</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -19,7 +19,7 @@
         <!-- HUD Overlay (im Spiel) -->
         <div id="hud" class="hidden">
             <div id="alien-counter">
-                <span>🛸 Aliens: </span>
+                <span>🧒 Kinder: </span>
                 <span id="alien-count">0</span>
             </div>
             <div id="stamina-bar-container">
@@ -40,7 +40,7 @@
         <div id="main-menu">
             <!-- Profil (oben links) -->
             <div id="menu-profile">
-                <div id="profile-avatar">👽</div>
+                <div id="profile-avatar">🧒</div>
                 <div id="profile-info">
                     <div id="profile-name">Spieler</div>
                     <div id="profile-level">Level <span id="level-number">1</span></div>
@@ -58,8 +58,8 @@
 
             <!-- Titel und Hauptinhalt (Mitte) -->
             <div id="menu-center">
-                <h1 id="menu-title">👽 ALIEN SAMMLER</h1>
-                <p id="menu-subtitle">Sammle Aliens und bringe sie sicher zur Insel!</p>
+                <h1 id="menu-title">🧒 CATCH THE KIDS</h1>
+                <p id="menu-subtitle">Fange Kinder und bringe sie sicher zur Insel!</p>
                 
                 <div id="menu-buttons">
                     <button id="play-button" class="menu-btn primary" onclick="startGame()">
@@ -78,9 +78,9 @@
                         <span class="stat-label">Highscore</span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-icon">👽</span>
+                        <span class="stat-icon">🧒</span>
                         <span class="stat-value" id="stat-total-aliens">0</span>
-                        <span class="stat-label">Aliens gefangen</span>
+                        <span class="stat-label">Kinder gefangen</span>
                     </div>
                     <div class="stat-item">
                         <span class="stat-icon">🎮</span>
@@ -194,32 +194,32 @@
                     <div id="shop-skins" class="shop-content active">
                         <div class="shop-grid">
                             <div class="shop-item owned" data-id="skin-default">
-                                <div class="item-preview">👽</div>
+                                <div class="item-preview">🧒</div>
                                 <div class="item-name">Standard</div>
                                 <div class="item-status">✓ Im Besitz</div>
                             </div>
                             <div class="shop-item" data-id="skin-gold" onclick="buyItem('skin-gold', 500)">
-                                <div class="item-preview" style="color: gold;">👽</div>
-                                <div class="item-name">Gold Alien</div>
+                                <div class="item-preview" style="color: gold;">🧒</div>
+                                <div class="item-name">Goldenes Kind</div>
                                 <div class="item-price">💰 500</div>
                             </div>
                             <div class="shop-item" data-id="skin-neon" onclick="buyItem('skin-neon', 750)">
-                                <div class="item-preview" style="color: #0ff; text-shadow: 0 0 10px #0ff;">👽</div>
+                                <div class="item-preview" style="color: #0ff; text-shadow: 0 0 10px #0ff;">🧒</div>
                                 <div class="item-name">Neon</div>
                                 <div class="item-price">💰 750</div>
                             </div>
                             <div class="shop-item" data-id="skin-fire" onclick="buyItem('skin-fire', 1000)">
-                                <div class="item-preview" style="color: #f50;">🔥👽</div>
+                                <div class="item-preview" style="color: #f50;">🔥🧒</div>
                                 <div class="item-name">Feuer</div>
                                 <div class="item-price">💰 1000</div>
                             </div>
                             <div class="shop-item" data-id="skin-ice" onclick="buyItem('skin-ice', 1000)">
-                                <div class="item-preview" style="color: #5cf;">❄️👽</div>
+                                <div class="item-preview" style="color: #5cf;">❄️🧒</div>
                                 <div class="item-name">Eis</div>
                                 <div class="item-price">💰 1000</div>
                             </div>
                             <div class="shop-item locked" data-id="skin-rainbow">
-                                <div class="item-preview">🌈👽</div>
+                                <div class="item-preview">🌈🧒</div>
                                 <div class="item-name">Regenbogen</div>
                                 <div class="item-status">🔒 Level 10</div>
                             </div>
@@ -232,7 +232,7 @@
                             <div class="shop-item upgrade" data-id="bag-size" onclick="buyUpgrade('bag-size')">
                                 <div class="item-preview">🎒</div>
                                 <div class="item-name">Größerer Beutel</div>
-                                <div class="item-desc">+2 Aliens Kapazität</div>
+                                <div class="item-desc">+2 Kinder Kapazität</div>
                                 <div class="item-level">Level <span id="bag-level">1</span>/5</div>
                                 <div class="item-price">💰 <span id="bag-price">200</span></div>
                             </div>
@@ -266,8 +266,8 @@
                             </div>
                             <div class="shop-item upgrade" data-id="alien-radar" onclick="buyUpgrade('alien-radar')">
                                 <div class="item-preview">📡</div>
-                                <div class="item-name">Alien-Radar</div>
-                                <div class="item-desc">Zeigt Aliens auf Karte</div>
+                                <div class="item-name">Kinder-Radar</div>
+                                <div class="item-desc">Zeigt Kinder auf Karte</div>
                                 <div class="item-level">Level <span id="radar-level">0</span>/1</div>
                                 <div class="item-price">💰 <span id="radar-price">1000</span></div>
                             </div>
@@ -312,7 +312,7 @@
                 <div class="popup-body tutorial">
                     <div class="tutorial-section">
                         <h3>🎯 Ziel des Spiels</h3>
-                        <p>Sammle alle Aliens in der Stadt und bringe sie sicher zu deinem Haus auf der Insel. Aber pass auf - die Polizei will dich aufhalten!</p>
+                        <p>Fange alle Kinder in der Stadt und bringe sie sicher zu deinem Haus auf der Insel. Aber pass auf - die Polizei will dich aufhalten!</p>
                     </div>
 
                     <div class="tutorial-section">
@@ -351,10 +351,10 @@
                             <li>🏝️ Du startest auf deiner Insel vor dem Haus</li>
                             <li>🚤 Geh zum Boot am Steg und drücke E</li>
                             <li>🌆 Fahre zum Festland (Stadt)</li>
-                            <li>👽 Suche grün leuchtende Aliens und sammle sie mit E</li>
-                            <li>🚔 Vorsicht! Mit Aliens jagt die Polizei dich!</li>
+                            <li>🧒 Suche grün leuchtende Kinder und sammle sie mit E</li>
+                            <li>🚔 Vorsicht! Mit Kindern jagt die Polizei dich!</li>
                             <li>🚤 Kehre zum Boot zurück und fahre zur Insel</li>
-                            <li>🏠 Geh ins Haus - Aliens werden eingesperrt!</li>
+                            <li>🏠 Geh ins Haus - Kinder werden eingesperrt!</li>
                         </ol>
                     </div>
                 </div>
@@ -376,7 +376,7 @@
                     <p>Die Polizei hat dich gefangen!</p>
                     <div class="result-stats">
                         <div class="result-stat">
-                            <span>Gesammelte Aliens:</span>
+                            <span>Gesammelte Kinder:</span>
                             <span id="result-aliens">0</span>
                         </div>
                         <div class="result-stat">
@@ -401,10 +401,10 @@
                     <h2>🎉 Gewonnen!</h2>
                 </div>
                 <div class="popup-body centered">
-                    <p>Du hast alle Aliens sicher zur Insel gebracht!</p>
+                    <p>Du hast alle Kinder sicher zur Insel gebracht!</p>
                     <div class="result-stats">
                         <div class="result-stat">
-                            <span>Gefangene Aliens:</span>
+                            <span>Gefangene Kinder:</span>
                             <span id="win-aliens">10</span>
                         </div>
                         <div class="result-stat bonus">

@@ -1,5 +1,5 @@
 /**
- * Alien Sammler - 3D Spiel
+ * Catch the Kids - 3D Spiel
  * Version 4.0 - Lebendige Stadt mit NPCs und Tieren
  */
 
@@ -21,6 +21,140 @@ let animals = [];   // Tiere (Hunde, Katzen, Vögel)
 let collectedAliens = 0;
 let deliveredAliens = 0;
 const TOTAL_ALIENS = 8;
+
+// Audio
+let audioManager = null;
+
+function createAudioManager() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+
+    const ctx = new AudioCtx();
+    const masterGain = ctx.createGain();
+    const musicGain = ctx.createGain();
+    const sfxGain = ctx.createGain();
+
+    masterGain.gain.value = 0.8;
+    musicGain.gain.value = 0.5;
+    sfxGain.gain.value = 0.7;
+
+    musicGain.connect(masterGain);
+    sfxGain.connect(masterGain);
+    masterGain.connect(ctx.destination);
+
+    let musicTimer = null;
+    let musicStep = 0;
+    const musicPattern = [261.63, 293.66, 329.63, 392.0, 329.63, 293.66];
+
+    function playTone(options) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const now = ctx.currentTime;
+        const duration = options.duration || 0.15;
+
+        osc.type = options.type || 'sine';
+        osc.frequency.setValueAtTime(options.frequency || 440, now);
+        if (options.detune) {
+            osc.detune.setValueAtTime(options.detune, now);
+        }
+
+        gain.gain.setValueAtTime(options.gain || 0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+        osc.connect(gain);
+        gain.connect(options.output || sfxGain);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+    }
+
+    function playSfx(name) {
+        switch (name) {
+            case 'collect':
+                playTone({ frequency: 660, duration: 0.12, type: 'triangle', gain: 0.25 });
+                playTone({ frequency: 990, duration: 0.08, type: 'triangle', gain: 0.2, detune: 4 });
+                break;
+            case 'deliver':
+                playTone({ frequency: 220, duration: 0.18, type: 'square', gain: 0.22 });
+                playTone({ frequency: 330, duration: 0.14, type: 'square', gain: 0.18 });
+                break;
+            case 'boat':
+                playTone({ frequency: 140, duration: 0.25, type: 'sawtooth', gain: 0.18 });
+                break;
+            case 'win':
+                playTone({ frequency: 523.25, duration: 0.2, type: 'triangle', gain: 0.2 });
+                playTone({ frequency: 659.25, duration: 0.2, type: 'triangle', gain: 0.2 });
+                playTone({ frequency: 783.99, duration: 0.22, type: 'triangle', gain: 0.22 });
+                break;
+            case 'lose':
+                playTone({ frequency: 196.0, duration: 0.3, type: 'sine', gain: 0.2 });
+                playTone({ frequency: 130.81, duration: 0.3, type: 'sine', gain: 0.18 });
+                break;
+            case 'error':
+                playTone({ frequency: 110, duration: 0.25, type: 'square', gain: 0.2 });
+                break;
+            case 'click':
+            default:
+                playTone({ frequency: 440, duration: 0.06, type: 'square', gain: 0.12 });
+                break;
+        }
+    }
+
+    function startMusic() {
+        if (musicTimer) return;
+        musicTimer = setInterval(() => {
+            const freq = musicPattern[musicStep % musicPattern.length];
+            musicStep += 1;
+            playTone({ frequency: freq, duration: 0.18, type: 'sine', gain: 0.08, output: musicGain });
+        }, 260);
+    }
+
+    function stopMusic() {
+        if (!musicTimer) return;
+        clearInterval(musicTimer);
+        musicTimer = null;
+    }
+
+    function resume() {
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+    }
+
+    function setVolumes(settings) {
+        if (!settings) return;
+        if (typeof settings.masterVolume === 'number') {
+            masterGain.gain.value = settings.masterVolume / 100;
+        }
+        if (typeof settings.musicVolume === 'number') {
+            musicGain.gain.value = settings.musicVolume / 100;
+        }
+        if (typeof settings.sfxVolume === 'number') {
+            sfxGain.gain.value = settings.sfxVolume / 100;
+        }
+    }
+
+    return {
+        resume,
+        startMusic,
+        stopMusic,
+        playSfx,
+        setVolumes
+    };
+}
+
+function ensureAudioReady() {
+    if (!audioManager) {
+        audioManager = createAudioManager();
+        window.audioManager = audioManager;
+        if (audioManager && window.currentSettings) {
+            audioManager.setVolumes(window.currentSettings);
+        }
+    }
+    if (audioManager) {
+        audioManager.resume();
+    }
+}
 
 // Spielzustand
 let gameState = 'start';
@@ -4006,6 +4140,11 @@ function onWindowResize() {
 function initGame() {
     gameState = 'playing';
     resetGame();
+
+    ensureAudioReady();
+    if (audioManager) {
+        audioManager.startMusic();
+    }
     
     // Pointer Lock aktivieren
     const canvas = document.getElementById('game-canvas');
@@ -4025,6 +4164,11 @@ function startGame() {
     
     gameState = 'playing';
     resetGame();
+
+    ensureAudioReady();
+    if (audioManager) {
+        audioManager.startMusic();
+    }
 }
 
 function restartGame() {
@@ -4036,6 +4180,11 @@ function restartGame() {
     
     gameState = 'playing';
     resetGame();
+
+    ensureAudioReady();
+    if (audioManager) {
+        audioManager.startMusic();
+    }
 }
 
 function resetGame() {
@@ -4095,7 +4244,9 @@ function handleInteraction() {
                 alien.userData.collected = true;
                 collectedAliens++;
                 updateAlienCounter();
-                showMessage('Alien eingesammelt! 👽');
+                showMessage('Kind eingesammelt! 🧒');
+
+                if (audioManager) audioManager.playSfx('collect');
                 
                 if (bagMesh) bagMesh.visible = true;
             }
@@ -4113,9 +4264,11 @@ function handleInteraction() {
                 playerOnBoat = true;
                 boatMoving = true;
                 boatDirection = 'toIsland';
-                showMessage('Auf zur Insel mit den Aliens! 🚤');
+                showMessage('Auf zur Insel mit den Kindern! 🚤');
+                if (audioManager) audioManager.playSfx('boat');
             } else {
-                showMessage('Sammle erst Aliens ein!');
+                showMessage('Sammle erst Kinder ein!');
+                if (audioManager) audioManager.playSfx('error');
             }
         }
     }
@@ -4130,7 +4283,8 @@ function handleInteraction() {
             playerOnBoat = true;
             boatMoving = true;
             boatDirection = 'toMainland';
-            showMessage('Zum Festland - Aliens sammeln! 🚤');
+            showMessage('Zum Festland - Kinder sammeln! 🚤');
+            if (audioManager) audioManager.playSfx('boat');
         }
     }
 
@@ -4155,8 +4309,10 @@ function handleInteraction() {
             
             deliveredAliens += 1;
             collectedAliens -= 1;
-            showMessage(`Alien eingesperrt! 🔒 (${deliveredAliens}/${TOTAL_ALIENS})`);
+            showMessage(`Kind eingesperrt! 🔒 (${deliveredAliens}/${TOTAL_ALIENS})`);
             updateAlienCounter();
+
+            if (audioManager) audioManager.playSfx('deliver');
             
             // Tasche aktualisieren
             if (collectedAliens === 0 && bagMesh) {
@@ -4168,6 +4324,7 @@ function handleInteraction() {
             }
         } else {
             showMessage('Alle Gefängnisse sind voll! 🏆');
+            if (audioManager) audioManager.playSfx('error');
         }
     }
 }
@@ -4187,6 +4344,8 @@ function updateAlienCounter() {
 function gameOver() {
     gameState = 'gameover';
     document.exitPointerLock();
+
+    if (audioManager) audioManager.playSfx('lose');
     
     // Menü-System benachrichtigen
     if (typeof onGameOver === 'function') {
@@ -4201,6 +4360,8 @@ function gameOver() {
 function gameWon() {
     gameState = 'win';
     document.exitPointerLock();
+
+    if (audioManager) audioManager.playSfx('win');
     
     // Menü-System benachrichtigen
     if (typeof onGameWin === 'function') {
@@ -4211,6 +4372,17 @@ function gameWon() {
     
     document.getElementById('hud').classList.add('hidden');
 }
+
+// Einstellungen vom Menü
+function applyGameSettings(settings) {
+    if (!settings) return;
+    ensureAudioReady();
+    if (audioManager) {
+        audioManager.setVolumes(settings);
+    }
+}
+
+window.ensureAudioReady = ensureAudioReady;
 
 // ==========================================
 // SPIELER BEWEGUNG (FIRST-PERSON)
@@ -4370,7 +4542,7 @@ function updateInteractionHints() {
         if (!alien.userData.collected && alien.visible) {
             const distance = player.position.distanceTo(alien.position);
             if (distance < 5) {
-                hint = '[E] Alien einsammeln';
+                hint = '[E] Kind einsammeln';
             }
         }
     });
@@ -4383,7 +4555,7 @@ function updateInteractionHints() {
         
         // Boot am Festland
         if ((distToBoat < 15 || distToDock < 15) && boat.position.x < 225) {
-            hint = collectedAliens > 0 ? '[E] Boot zur Insel nehmen' : '[E] Boot (sammle erst Aliens!)';
+            hint = collectedAliens > 0 ? '[E] Boot zur Insel nehmen' : '[E] Boot (sammle erst Kinder!)';
         } 
         // Boot an der Insel
         else if ((distToBoat < 15 || distToIslandDock < 15) && boat.position.x >= 225) {
@@ -4395,7 +4567,7 @@ function updateInteractionHints() {
     if (!hint && collectedAliens > 0) {
         const distToHouse = player.position.distanceTo(house.position);
         if (distToHouse < 15) {
-            hint = '[E] Aliens im Haus abliefern';
+            hint = '[E] Kinder im Haus abliefern';
         }
     }
     
@@ -4463,7 +4635,7 @@ function updateBoat() {
             // Spieler auf Festland-Dock absetzen
             player.position.set(195, 3.5, 0);
             camera.position.set(195, 3.5, 0);
-            showMessage('In der Stadt! Sammle Aliens! 🌆');
+            showMessage('In der Stadt! Sammle Kinder! 🌆');
         }
     }
 
