@@ -18,9 +18,43 @@ let streetLights = [];
 let vehicles = [];
 let npcs = [];      // Zivilisten
 let animals = [];   // Tiere (Hunde, Katzen, Vögel)
+let seaCreatures = []; // Fische, Haie
+let seaBoats = [];   // Andere Boote
 let collectedAliens = 0;
 let deliveredAliens = 0;
 const TOTAL_ALIENS = 8;
+
+// Welt-Dimensionen und Insel-Positionen
+const WORLD_SIZE = 1200;
+const WORLD_HALF = WORLD_SIZE / 2;
+const MAINLAND_BOUND = WORLD_HALF - 40;
+
+const ISLAND_CENTER_X = WORLD_HALF + 260;
+const ISLAND_CENTER_Z = 0;
+const ISLAND_RADIUS = 85;
+const ISLAND_THRESHOLD_X = WORLD_HALF + 40;
+
+const MAINLAND_DOCK_X = WORLD_HALF - 80;
+const ISLAND_DOCK_X = ISLAND_CENTER_X - 90;
+const BOAT_MAINLAND_X = MAINLAND_DOCK_X + 5;
+const BOAT_ISLAND_X = ISLAND_DOCK_X + 5;
+const BOAT_SWITCH_X = (BOAT_MAINLAND_X + BOAT_ISLAND_X) / 2;
+
+const CITY_ROADS = [-100, 0, 100];
+const ROAD_LIMIT = 200;
+const ROAD_LANES = [-3, 3];
+const CITY_BOUND = 180;
+
+const RIVER_WIDTH = 18;
+const RIVER_DEPTH = 6;
+const RIVER_WATER_LEVEL = -0.6;
+const LAKE_RADIUS = 34;
+const LAKE_DEPTH = 5;
+const LAKE_WATER_LEVEL = -0.5;
+const LAKE_CENTER = { x: 360, z: 260 };
+
+let riverCurve = null;
+let riverSamples = [];
 
 // Audio
 let audioManager = null;
@@ -215,17 +249,17 @@ function init() {
     
     // Realistischer Himmel
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.FogExp2(0x87CEEB, 0.004); // Stärkerer Nebel für Performance
+    scene.fog = new THREE.FogExp2(0x87CEEB, 0.004); // Dynamisch per Settings anpassbar
 
     // First-Person Kamera mit reduzierter Sichtweite
     camera = new THREE.PerspectiveCamera(
         70,
         window.innerWidth / window.innerHeight,
         0.5,
-        500  // Reduzierte Sichtweite
+        700  // Wird später durch Settings überschrieben
     );
     // Spawnpoint auf der Insel vor dem Haus
-    camera.position.set(280, 6, 10); // Auf der Insel (Höhe 6 = Inselboden + Augenhöhe)
+    camera.position.set(ISLAND_CENTER_X, 6, 10); // Auf der Insel (Höhe 6 = Inselboden + Augenhöhe)
 
     // Renderer mit Performance-Optimierungen
     const canvas = document.getElementById('game-canvas');
@@ -257,6 +291,9 @@ function init() {
 
     // Pointer Lock für Maussteuerung
     setupPointerLock();
+
+    // View-Distance aus Settings übernehmen
+    applyGameSettings(window.currentSettings || { viewDistance: 600, shadows: true });
 
     // Animation starten
     animate();
@@ -338,10 +375,15 @@ function setupLights() {
 function createWorld() {
     createWater();
     createMainland();
+    createRiversAndLakes();
+    createTerrainFeatures();
     createCity();
+    createOutskirts();
     createIsland();
     createBoatSystem();
     createHouse();
+    createSeaLife();
+    createSeaBoats();
     createAliens();
     createPolice();
     createVehicles();
@@ -353,7 +395,7 @@ function createWorld() {
 // REALISTISCHES WASSER
 // ==========================================
 function createWater() {
-    const waterGeometry = new THREE.PlaneGeometry(2000, 2000, 100, 100);
+    const waterGeometry = new THREE.PlaneGeometry(WORLD_SIZE * 6, WORLD_SIZE * 6, 120, 120);
     
     const waterMaterial = new THREE.MeshStandardMaterial({
         color: 0x006994,
@@ -374,8 +416,8 @@ function createWater() {
 // RIESIGES FESTLAND (STADT)
 // ==========================================
 function createMainland() {
-    // Hauptland - 400x400
-    const mainlandGeometry = new THREE.BoxGeometry(400, 3, 400);
+    // Großes Hauptland
+    const mainlandGeometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 200, 200);
     const mainlandMaterial = new THREE.MeshStandardMaterial({
         color: 0x2d2d2d,
         roughness: 0.9,
@@ -383,84 +425,221 @@ function createMainland() {
     });
     
     mainland = new THREE.Mesh(mainlandGeometry, mainlandMaterial);
+    mainland.rotation.x = -Math.PI / 2;
+    initRiverPath();
+    applyTerrainToMainland(mainlandGeometry);
     mainland.position.set(0, 0, 0);
     mainland.receiveShadow = true;
     mainland.castShadow = true;
     scene.add(mainland);
 
     createParks();
-    createStreets();
 }
 
-// ==========================================
-// STRAßEN
-// ==========================================
-function createStreets() {
-    const streetMaterial = new THREE.MeshStandardMaterial({
-        color: 0x333333,
-        roughness: 0.95
-    });
-    
-    const sidewalkMaterial = new THREE.MeshStandardMaterial({
-        color: 0x808080,
-        roughness: 0.8
-    });
-
-    // Hauptstraßen (Horizontal)
-    for (let z = -180; z <= 180; z += 60) {
-        const street = new THREE.Mesh(
-            new THREE.BoxGeometry(380, 0.2, 15),
-            streetMaterial
-        );
-        street.position.set(0, 1.6, z);
-        street.receiveShadow = true;
-        scene.add(street);
-        
-        // Mittelstreifen
-        for (let x = -180; x <= 180; x += 10) {
-            const line = new THREE.Mesh(
-                new THREE.BoxGeometry(5, 0.25, 0.3),
-                new THREE.MeshStandardMaterial({ color: 0xFFFFFF })
-            );
-            line.position.set(x, 1.75, z);
-            scene.add(line);
-        }
-
-        // Gehwege
-        const sidewalk1 = new THREE.Mesh(
-            new THREE.BoxGeometry(380, 0.3, 3),
-            sidewalkMaterial
-        );
-        sidewalk1.position.set(0, 1.65, z + 9);
-        scene.add(sidewalk1);
-
-        const sidewalk2 = new THREE.Mesh(
-            new THREE.BoxGeometry(380, 0.3, 3),
-            sidewalkMaterial
-        );
-        sidewalk2.position.set(0, 1.65, z - 9);
-        scene.add(sidewalk2);
+function applyTerrainToMainland(geometry) {
+    const positions = geometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i);
+        const z = positions.getZ(i);
+        const height = getTerrainHeightAt(x, z);
+        positions.setY(i, height);
     }
+    positions.needsUpdate = true;
+    geometry.computeVertexNormals();
+}
 
-    // Hauptstraßen (Vertikal)
-    for (let x = -180; x <= 180; x += 60) {
-        const street = new THREE.Mesh(
-            new THREE.BoxGeometry(15, 0.2, 380),
-            streetMaterial
-        );
-        street.position.set(x, 1.6, 0);
-        street.receiveShadow = true;
-        scene.add(street);
-        
-        for (let z = -180; z <= 180; z += 10) {
-            const line = new THREE.Mesh(
-                new THREE.BoxGeometry(0.3, 0.25, 5),
-                new THREE.MeshStandardMaterial({ color: 0xFFFFFF })
-            );
-            line.position.set(x, 1.75, z);
-            scene.add(line);
-        }
+function initRiverPath() {
+    const left = -WORLD_HALF + 120;
+    const right = WORLD_HALF - 120;
+    riverCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(left, RIVER_WATER_LEVEL, 260),
+        new THREE.Vector3(-300, RIVER_WATER_LEVEL, 320),
+        new THREE.Vector3(-60, RIVER_WATER_LEVEL, 250),
+        new THREE.Vector3(180, RIVER_WATER_LEVEL, 320),
+        new THREE.Vector3(right, RIVER_WATER_LEVEL, 260)
+    ]);
+    riverSamples = riverCurve.getPoints(140);
+}
+
+function getTerrainHeightAt(x, z) {
+    const distanceFromCity = Math.sqrt(x * x + z * z);
+    const cityRadius = CITY_BOUND + 40;
+    const blend = smoothstep(cityRadius, cityRadius + 120, distanceFromCity);
+
+    const base = terrainNoise(x, z);
+    const edgeFactor = Math.max(0, (distanceFromCity - cityRadius) / (WORLD_HALF - cityRadius));
+    const edgeRise = edgeFactor * edgeFactor * 18;
+    const riverCut = getRiverDepthAt(x, z);
+    const lakeCut = getLakeDepthAt(x, z);
+
+    return base * blend + edgeRise - riverCut - lakeCut;
+}
+
+function getRiverDepthAt(x, z) {
+    if (!riverSamples.length) return 0;
+    let minDist = Infinity;
+    for (let i = 0; i < riverSamples.length; i++) {
+        const dx = x - riverSamples[i].x;
+        const dz = z - riverSamples[i].z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < minDist) minDist = dist;
     }
+    if (minDist > RIVER_WIDTH) return 0;
+    const t = 1 - minDist / RIVER_WIDTH;
+    return t * t * RIVER_DEPTH;
+}
+
+function getLakeDepthAt(x, z) {
+    const dx = x - LAKE_CENTER.x;
+    const dz = z - LAKE_CENTER.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist > LAKE_RADIUS) return 0;
+    const t = 1 - dist / LAKE_RADIUS;
+    return t * t * LAKE_DEPTH;
+}
+
+function terrainNoise(x, z) {
+    const nx = x / WORLD_SIZE;
+    const nz = z / WORLD_SIZE;
+    let h = 0;
+    h += Math.sin(nx * Math.PI * 2) * 4;
+    h += Math.cos(nz * Math.PI * 2) * 4;
+    h += Math.sin((nx + nz) * Math.PI * 4) * 3;
+    h += Math.cos(nx * Math.PI * 6 + nz * Math.PI * 3) * 2;
+    h += Math.sin(nx * Math.PI * 10 - nz * Math.PI * 8) * 1.5;
+    return h;
+}
+
+function smoothstep(edge0, edge1, x) {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+}
+
+function getTerrainSlopeAt(x, z) {
+    const step = 4;
+    const h0 = getTerrainHeightAt(x, z);
+    const hx = getTerrainHeightAt(x + step, z);
+    const hz = getTerrainHeightAt(x, z + step);
+    const dx = Math.abs(hx - h0) / step;
+    const dz = Math.abs(hz - h0) / step;
+    return Math.max(dx, dz);
+}
+
+function isLandSuitable(x, z, maxSlope) {
+    if (getRiverDepthAt(x, z) > 0 || getLakeDepthAt(x, z) > 0) return false;
+    return getTerrainSlopeAt(x, z) <= maxSlope;
+}
+
+function createRiversAndLakes() {
+    createRiverWater();
+    createRiverBanks();
+    createRiverBridges();
+    createLakeWater();
+}
+
+function createRiverWater() {
+    if (!riverCurve) return;
+    const riverGeometry = new THREE.TubeGeometry(riverCurve, 140, RIVER_WIDTH * 0.45, 8, false);
+    const riverMaterial = new THREE.MeshStandardMaterial({
+        color: 0x2e6f9e,
+        roughness: 0.2,
+        metalness: 0.4,
+        transparent: true,
+        opacity: 0.9
+    });
+    const riverMesh = new THREE.Mesh(riverGeometry, riverMaterial);
+    riverMesh.castShadow = false;
+    riverMesh.receiveShadow = true;
+    scene.add(riverMesh);
+}
+
+function createLakeWater() {
+    const lake = new THREE.Mesh(
+        new THREE.CircleGeometry(LAKE_RADIUS, 36),
+        new THREE.MeshStandardMaterial({
+            color: 0x2f7aa8,
+            roughness: 0.25,
+            metalness: 0.35,
+            transparent: true,
+            opacity: 0.9
+        })
+    );
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(LAKE_CENTER.x, LAKE_WATER_LEVEL, LAKE_CENTER.z);
+    lake.receiveShadow = true;
+    scene.add(lake);
+}
+
+function createRiverBanks() {
+    if (!riverCurve || !riverSamples.length) return;
+    const bankMaterial = new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.95 });
+    const segmentCount = 80;
+    const step = Math.floor(riverSamples.length / segmentCount);
+
+    for (let i = 0; i < riverSamples.length - step; i += step) {
+        const t = i / (riverSamples.length - 1);
+        const point = riverCurve.getPoint(t);
+        const tangent = riverCurve.getTangent(t).normalize();
+        const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+        const segmentLength = RIVER_WIDTH * 0.9;
+        const segmentWidth = 3.5;
+        const offsets = [RIVER_WIDTH * 0.7, -RIVER_WIDTH * 0.7];
+
+        offsets.forEach(offset => {
+            const centerX = point.x + normal.x * offset;
+            const centerZ = point.z + normal.z * offset;
+            const groundHeight = getTerrainHeightAt(centerX, centerZ);
+
+            const bank = new THREE.Mesh(
+                new THREE.BoxGeometry(segmentWidth, 0.3, segmentLength),
+                bankMaterial
+            );
+            bank.position.set(centerX, groundHeight + 0.15, centerZ);
+            bank.rotation.y = Math.atan2(tangent.x, tangent.z);
+            bank.receiveShadow = true;
+            scene.add(bank);
+        });
+    }
+}
+
+function createRiverBridges() {
+    if (!riverCurve) return;
+    const bridgeStops = [0.32, 0.62];
+    bridgeStops.forEach(t => createBridgeAtRiver(t));
+}
+
+function createBridgeAtRiver(t) {
+    const point = riverCurve.getPoint(t);
+    const tangent = riverCurve.getTangent(t).normalize();
+    const rotationY = Math.atan2(tangent.x, tangent.z) + Math.PI / 2;
+
+    const bridgeWidth = RIVER_WIDTH * 2.4;
+    const bridgeLength = 8;
+    const bridgeY = getTerrainHeightAt(point.x, point.z) + 0.6;
+
+    const deck = new THREE.Mesh(
+        new THREE.BoxGeometry(bridgeWidth, 0.4, bridgeLength),
+        new THREE.MeshStandardMaterial({ color: 0x8b6f47, roughness: 0.9 })
+    );
+    deck.position.set(point.x, bridgeY, point.z);
+    deck.rotation.y = rotationY;
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    scene.add(deck);
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 0.85 });
+    [-bridgeWidth / 2 + 0.6, bridgeWidth / 2 - 0.6].forEach(offset => {
+        const rail = new THREE.Mesh(
+            new THREE.BoxGeometry(0.3, 0.8, bridgeLength),
+            railMat
+        );
+        const normalX = Math.cos(rotationY + Math.PI / 2);
+        const normalZ = Math.sin(rotationY + Math.PI / 2);
+        rail.position.set(point.x + normalX * offset, bridgeY + 0.6, point.z + normalZ * offset);
+        rail.rotation.y = rotationY;
+        scene.add(rail);
+    });
 }
 
 // ==========================================
@@ -471,7 +650,11 @@ function createParks() {
         { x: -150, z: -150, size: 40 },
         { x: 150, z: 150, size: 35 },
         { x: -100, z: 100, size: 30 },
-        { x: 100, z: -100, size: 25 }
+        { x: 100, z: -100, size: 25 },
+        { x: -260, z: 40, size: 55 },
+        { x: 260, z: -40, size: 50 },
+        { x: -40, z: 260, size: 45 },
+        { x: 40, z: -260, size: 45 }
     ];
 
     parkPositions.forEach(park => {
@@ -479,7 +662,7 @@ function createParks() {
             new THREE.BoxGeometry(park.size, 0.5, park.size),
             new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.9 })
         );
-        grass.position.set(park.x, 1.8, park.z);
+        grass.position.set(park.x, getTerrainHeightAt(park.x, park.z) + 0.25, park.z);
         grass.receiveShadow = true;
         scene.add(grass);
 
@@ -487,7 +670,7 @@ function createParks() {
             const tree = createRealisticTree();
             tree.position.set(
                 park.x + (Math.random() - 0.5) * park.size * 0.8,
-                1.5,
+                getTerrainHeightAt(park.x, park.z),
                 park.z + (Math.random() - 0.5) * park.size * 0.8
             );
             scene.add(tree);
@@ -497,7 +680,7 @@ function createParks() {
             const bench = createBench();
             bench.position.set(
                 park.x + (Math.random() - 0.5) * park.size * 0.5,
-                2,
+                getTerrainHeightAt(park.x, park.z) + 0.2,
                 park.z + (Math.random() - 0.5) * park.size * 0.5
             );
             bench.rotation.y = Math.random() * Math.PI;
@@ -530,6 +713,409 @@ function createBench() {
     });
 
     return bench;
+}
+
+// ==========================================
+// AUSSERHALB DER STADT (WAELDER, DORF, SEEN)
+// ==========================================
+function createOutskirts() {
+    createForestRing();
+    createVillage();
+    createLakes();
+    createRegionalPark();
+}
+
+function createTerrainFeatures() {
+    const hills = [
+        { x: -420, z: -140, r: 70, h: 18 },
+        { x: 460, z: 160, r: 60, h: 15 },
+        { x: -520, z: 320, r: 85, h: 22 },
+        { x: 520, z: -340, r: 90, h: 26 }
+    ];
+
+    const mountains = [
+        { x: -600, z: 0, r: 120, h: 38 },
+        { x: 600, z: 60, r: 110, h: 34 },
+        { x: 0, z: 620, r: 100, h: 30 }
+    ];
+
+    const valleys = [
+        { x: -420, z: 480, r: 60, d: 10 },
+        { x: 420, z: -480, r: 55, d: 9 }
+    ];
+
+    hills.forEach(h => createHill(h.x, h.z, h.r, h.h));
+    mountains.forEach(m => createMountain(m.x, m.z, m.r, m.h));
+    valleys.forEach(v => createValley(v.x, v.z, v.r, v.d));
+}
+
+function createHill(x, z, radius, height) {
+    const hill = new THREE.Mesh(
+        new THREE.ConeGeometry(radius, height, 20),
+        new THREE.MeshStandardMaterial({ color: 0x3b7d3b, roughness: 0.9 })
+    );
+    hill.position.set(x, height / 2 - 0.1, z);
+    hill.castShadow = true;
+    hill.receiveShadow = true;
+    scene.add(hill);
+}
+
+function createMountain(x, z, radius, height) {
+    const base = new THREE.Mesh(
+        new THREE.ConeGeometry(radius, height, 22),
+        new THREE.MeshStandardMaterial({ color: 0x5b5b5b, roughness: 0.95 })
+    );
+    base.position.set(x, height / 2 - 0.2, z);
+    base.castShadow = true;
+    base.receiveShadow = true;
+    scene.add(base);
+
+    const peak = new THREE.Mesh(
+        new THREE.ConeGeometry(radius * 0.45, height * 0.45, 16),
+        new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.7 })
+    );
+    peak.position.set(x, height * 0.8, z);
+    peak.castShadow = true;
+    scene.add(peak);
+}
+
+function createValley(x, z, radius, depth) {
+    const valley = new THREE.Mesh(
+        new THREE.ConeGeometry(radius, depth, 20, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x2e5c2e, roughness: 0.95, side: THREE.DoubleSide })
+    );
+    valley.position.set(x, -depth / 2, z);
+    valley.rotation.x = Math.PI;
+    scene.add(valley);
+}
+
+function createForestRing() {
+    const forestPatches = [
+        { x: -420, z: 260, radius: 90, trees: 45 },
+        { x: 420, z: 320, radius: 80, trees: 40 },
+        { x: -380, z: -320, radius: 85, trees: 42 },
+        { x: 320, z: -420, radius: 90, trees: 48 },
+        { x: 0, z: 480, radius: 100, trees: 55 },
+        { x: 0, z: -480, radius: 100, trees: 55 }
+    ];
+
+    forestPatches.forEach(patch => {
+        createForestPatch(patch.x, patch.z, patch.radius, patch.trees);
+    });
+}
+
+function createForestPatch(centerX, centerZ, radius, treeCount) {
+    const forestFloor = new THREE.Mesh(
+        new THREE.CircleGeometry(radius * 1.05, 36),
+        new THREE.MeshStandardMaterial({ color: 0x1f5e1f, roughness: 0.95 })
+    );
+    forestFloor.rotation.x = -Math.PI / 2;
+    forestFloor.position.set(centerX, getTerrainHeightAt(centerX, centerZ) + 0.02, centerZ);
+    forestFloor.receiveShadow = true;
+    scene.add(forestFloor);
+
+    let spawned = 0;
+    let tries = 0;
+    while (spawned < treeCount && tries < treeCount * 6) {
+        tries += 1;
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * radius;
+        const x = centerX + Math.cos(angle) * dist;
+        const z = centerZ + Math.sin(angle) * dist;
+        if (!isLandSuitable(x, z, 0.35)) continue;
+        const tree = createRealisticTree();
+        tree.position.set(x, getTerrainHeightAt(x, z), z);
+        scene.add(tree);
+        spawned += 1;
+    }
+
+    for (let i = 0; i < 10; i++) {
+        const bush = new THREE.Mesh(
+            new THREE.SphereGeometry(1.1, 8, 6),
+            new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.95 })
+        );
+        const angle = Math.random() * Math.PI * 2;
+        const dist = radius * 0.8 + Math.random() * radius * 0.2;
+        const x = centerX + Math.cos(angle) * dist;
+        const z = centerZ + Math.sin(angle) * dist;
+        bush.position.set(x, getTerrainHeightAt(x, z) + 0.6, z);
+        bush.scale.y = 0.7;
+        scene.add(bush);
+    }
+}
+
+function createVillage() {
+    const centerX = -360;
+    const centerZ = 340;
+    const houseCount = 10;
+
+    for (let i = 0; i < houseCount; i++) {
+        const angle = (i / houseCount) * Math.PI * 2;
+        const dist = 35 + Math.random() * 18;
+        const hx = centerX + Math.cos(angle) * dist;
+        const hz = centerZ + Math.sin(angle) * dist;
+        if (!isLandSuitable(hx, hz, 0.25)) continue;
+        createResidentialHouse(hx, hz);
+    }
+
+    createVillageSquare(centerX, centerZ);
+
+    for (let i = 0; i < 12; i++) {
+        const tree = createRealisticTree();
+        const x = centerX + (Math.random() - 0.5) * 120;
+        const z = centerZ + (Math.random() - 0.5) * 120;
+        if (!isLandSuitable(x, z, 0.35)) continue;
+        tree.position.set(x, getTerrainHeightAt(x, z), z);
+        scene.add(tree);
+    }
+}
+
+function createVillageSquare(x, z) {
+    const square = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 0.2, 30),
+        new THREE.MeshStandardMaterial({ color: 0x9c7a4b, roughness: 0.9 })
+    );
+    square.position.set(x, getTerrainHeightAt(x, z) + 0.05, z);
+    square.receiveShadow = true;
+    scene.add(square);
+
+    const well = new THREE.Mesh(
+        new THREE.CylinderGeometry(3, 3, 1.2, 16),
+        new THREE.MeshStandardMaterial({ color: 0x6e6e6e, roughness: 0.8 })
+    );
+    well.position.set(x, getTerrainHeightAt(x, z) + 0.6, z);
+    well.castShadow = true;
+    scene.add(well);
+}
+
+function createLakes() {
+    const lakes = [
+        { x: -260, z: -320, radius: 30 },
+        { x: 300, z: 260, radius: 26 },
+        { x: -420, z: 40, radius: 22 },
+        { x: 420, z: -60, radius: 24 }
+    ];
+
+    lakes.forEach(lake => {
+        createLake(lake.x, lake.z, lake.radius);
+    });
+}
+
+function createLake(x, z, radius) {
+    const shore = new THREE.Mesh(
+        new THREE.RingGeometry(radius * 0.85, radius * 1.15, 36),
+        new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.95 })
+    );
+    shore.rotation.x = -Math.PI / 2;
+    shore.position.set(x, 0.03, z);
+    shore.receiveShadow = true;
+    scene.add(shore);
+
+    const waterSurface = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 36),
+        new THREE.MeshStandardMaterial({ color: 0x2e6f9e, roughness: 0.15, metalness: 0.4 })
+    );
+    waterSurface.rotation.x = -Math.PI / 2;
+    waterSurface.position.set(x, 0.05, z);
+    scene.add(waterSurface);
+}
+
+function createRegionalPark() {
+    const parkX = 340;
+    const parkZ = -260;
+    const parkSize = 120;
+
+    const grass = new THREE.Mesh(
+        new THREE.BoxGeometry(parkSize, 0.2, parkSize),
+        new THREE.MeshStandardMaterial({ color: 0x2e8b57, roughness: 0.9 })
+    );
+    grass.position.set(parkX, getTerrainHeightAt(parkX, parkZ) + 0.1, parkZ);
+    grass.receiveShadow = true;
+    scene.add(grass);
+
+    for (let i = 0; i < 20; i++) {
+        const tree = createRealisticTree();
+        const x = parkX + (Math.random() - 0.5) * parkSize * 0.85;
+        const z = parkZ + (Math.random() - 0.5) * parkSize * 0.85;
+        if (!isLandSuitable(x, z, 0.35)) continue;
+        tree.position.set(x, getTerrainHeightAt(x, z), z);
+        scene.add(tree);
+    }
+
+    const lake = new THREE.Mesh(
+        new THREE.CircleGeometry(12, 28),
+        new THREE.MeshStandardMaterial({ color: 0x3a78a0, roughness: 0.2, metalness: 0.3 })
+    );
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(parkX - 25, getTerrainHeightAt(parkX - 25, parkZ + 10) + 0.12, parkZ + 10);
+    scene.add(lake);
+}
+
+// ==========================================
+// MEERESLEBEN UND BOOTE
+// ==========================================
+function createSeaLife() {
+    seaCreatures = [];
+
+    const fishCount = 45;
+    const sharkCount = 6;
+    for (let i = 0; i < fishCount; i++) {
+        const fish = createFish();
+        placeSeaCreature(fish, -0.6, WORLD_HALF * 2.2);
+        fish.userData = {
+            type: 'fish',
+            speed: 0.15 + Math.random() * 0.1,
+            angle: Math.random() * Math.PI * 2,
+            radius: 8 + Math.random() * 20,
+            center: fish.position.clone()
+        };
+        seaCreatures.push(fish);
+        scene.add(fish);
+    }
+
+    for (let i = 0; i < sharkCount; i++) {
+        const shark = createShark();
+        placeSeaCreature(shark, -0.4, WORLD_HALF * 2.4);
+        shark.userData = {
+            type: 'shark',
+            speed: 0.22 + Math.random() * 0.12,
+            angle: Math.random() * Math.PI * 2,
+            radius: 25 + Math.random() * 40,
+            center: shark.position.clone()
+        };
+        seaCreatures.push(shark);
+        scene.add(shark);
+    }
+}
+
+function placeSeaCreature(creature, baseY, radiusLimit) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = MAINLAND_BOUND + 80 + Math.random() * radiusLimit;
+    creature.position.set(
+        Math.cos(angle) * dist,
+        baseY,
+        Math.sin(angle) * dist
+    );
+}
+
+function createFish() {
+    const fish = new THREE.Group();
+    const colors = [0x4db6ac, 0xffcc80, 0x90caf9, 0xffab91, 0xa5d6a7];
+    const bodyMat = new THREE.MeshStandardMaterial({ color: colors[Math.floor(Math.random() * colors.length)], roughness: 0.6 });
+
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 10), bodyMat);
+    body.scale.set(1.4, 0.7, 0.6);
+    fish.add(body);
+
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.6, 10), bodyMat);
+    tail.position.set(-0.7, 0, 0);
+    tail.rotation.z = Math.PI / 2;
+    fish.add(tail);
+
+    return fish;
+}
+
+function createShark() {
+    const shark = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x607d8b, roughness: 0.4, metalness: 0.1 });
+
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.6, 2.6, 12), bodyMat);
+    body.rotation.z = Math.PI / 2;
+    shark.add(body);
+
+    const fin = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.5, 10), bodyMat);
+    fin.position.set(0.1, 0.45, 0);
+    fin.rotation.x = Math.PI;
+    shark.add(fin);
+
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.7, 10), bodyMat);
+    tail.position.set(-1.4, 0, 0);
+    tail.rotation.z = Math.PI / 2;
+    shark.add(tail);
+
+    return shark;
+}
+
+function createSeaBoats() {
+    seaBoats = [];
+    const boatCount = 6;
+    for (let i = 0; i < boatCount; i++) {
+        const boat = createSmallBoat();
+        placeSeaBoat(boat);
+        boat.userData = {
+            speed: 0.12 + Math.random() * 0.08,
+            direction: Math.random() * Math.PI * 2,
+            turnRate: (Math.random() - 0.5) * 0.005
+        };
+        seaBoats.push(boat);
+        scene.add(boat);
+    }
+}
+
+function placeSeaBoat(boat) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = MAINLAND_BOUND + 120 + Math.random() * WORLD_HALF * 1.6;
+    boat.position.set(Math.cos(angle) * dist, 1, Math.sin(angle) * dist);
+    boat.rotation.y = angle + Math.PI / 2;
+}
+
+function createSmallBoat() {
+    const boat = new THREE.Group();
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.8 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.6 });
+
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(3, 0.8, 6), hullMat);
+    hull.castShadow = true;
+    boat.add(hull);
+
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.4, 4.8), trimMat);
+    deck.position.y = 0.5;
+    boat.add(deck);
+
+    return boat;
+}
+
+function updateSeaLife() {
+    if (!seaCreatures.length) return;
+    const time = clock.elapsedTime;
+
+    seaCreatures.forEach(creature => {
+        const data = creature.userData;
+        data.angle += data.speed * 0.01;
+        const wobble = Math.sin(time * 1.5 + data.angle) * 0.6;
+        const radius = data.radius + Math.sin(time + data.angle) * 2;
+
+        creature.position.x = data.center.x + Math.cos(data.angle) * radius;
+        creature.position.z = data.center.z + Math.sin(data.angle) * radius;
+        creature.position.y += Math.sin(time * 2 + data.angle) * 0.002;
+
+        creature.rotation.y = Math.atan2(
+            Math.cos(data.angle) * radius,
+            -Math.sin(data.angle) * radius
+        );
+        creature.rotation.z = wobble * 0.05;
+    });
+}
+
+function updateSeaBoats() {
+    if (!seaBoats.length) return;
+    const time = clock.elapsedTime;
+
+    seaBoats.forEach(boat => {
+        const data = boat.userData;
+        data.direction += data.turnRate;
+        boat.position.x += Math.cos(data.direction) * data.speed;
+        boat.position.z += Math.sin(data.direction) * data.speed;
+
+        const distFromCenter = Math.sqrt(boat.position.x * boat.position.x + boat.position.z * boat.position.z);
+        if (distFromCenter < MAINLAND_BOUND + 60 || distFromCenter > WORLD_HALF * 2.8) {
+            placeSeaBoat(boat);
+        }
+
+        boat.rotation.y = data.direction + Math.PI / 2;
+        boat.position.y = 1 + Math.sin(time * 1.5 + data.direction) * 0.12;
+        boat.rotation.z = Math.sin(time * 1.2 + data.direction) * 0.02;
+    });
 }
 
 // ==========================================
@@ -592,7 +1178,6 @@ function createCity() {
     createPark(80, 130);
     createPark(-80, -130);
     
-    createStreetLights();
     createRoads();
 }
 
@@ -1366,7 +1951,7 @@ function createResidentialHouse(x, z) {
         building.add(bush);
     });
     
-    building.position.set(x, 0, z);
+    building.position.set(x, getTerrainHeightAt(x, z), z);
     scene.add(building);
     buildings.push(building);
     addBuildingCollider(x, z, 12, 14);
@@ -1494,7 +2079,7 @@ function createRoads() {
         // Straßenlaternen
         for (let z = -180; z <= 180; z += 40) {
             [-8, 8].forEach(offset => {
-                createStreetLight(x + offset, z);
+                createRoadStreetLight(x + offset, z);
             });
         }
     });
@@ -1560,8 +2145,8 @@ function createRoads() {
     });
 }
 
-// Straßenlaterne erstellen
-function createStreetLight(x, z) {
+// Straßenlaterne erstellen (entlang der Straßen in createRoads)
+function createRoadStreetLight(x, z) {
     const light = new THREE.Group();
     
     // Pfosten
@@ -1725,66 +2310,6 @@ function createRealisticBuilding() {
     building.add(door);
 
     return building;
-}
-
-// ==========================================
-// STRAßENLATERNEN
-// ==========================================
-function createStreetLights() {
-    const poleMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2c2c2c,
-        roughness: 0.3,
-        metalness: 0.8
-    });
-
-    for (let x = -180; x <= 180; x += 30) {
-        for (let z = -180; z <= 180; z += 60) {
-            [-12, 12].forEach(offset => {
-                const lamp = createStreetLight(poleMaterial);
-                lamp.position.set(x, 1.5, z + offset);
-                scene.add(lamp);
-            });
-        }
-    }
-}
-
-function createStreetLight(poleMaterial) {
-    const lamp = new THREE.Group();
-
-    const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.2, 6, 8),
-        poleMaterial
-    );
-    pole.position.y = 3;
-    pole.castShadow = true;
-    lamp.add(pole);
-
-    const arm = new THREE.Mesh(
-        new THREE.BoxGeometry(2, 0.1, 0.1),
-        poleMaterial
-    );
-    arm.position.set(1, 5.8, 0);
-    lamp.add(arm);
-
-    const housing = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 0.3, 0.5),
-        new THREE.MeshStandardMaterial({ color: 0x1a1a1a })
-    );
-    housing.position.set(1.8, 5.65, 0);
-    lamp.add(housing);
-
-    const lightMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(0.9, 0.1, 0.4),
-        new THREE.MeshStandardMaterial({
-            color: 0xFFE4B5,
-            emissive: 0xFFE4B5,
-            emissiveIntensity: 0.5
-        })
-    );
-    lightMesh.position.set(1.8, 5.45, 0);
-    lamp.add(lightMesh);
-
-    return lamp;
 }
 
 // ==========================================
@@ -2044,48 +2569,209 @@ function createRealisticTree() {
 // GRÖßERE INSEL
 // ==========================================
 function createIsland() {
-    const islandGeometry = new THREE.CylinderGeometry(40, 45, 4, 64);
+    // Hauptinsel - großer grüner Kern
+    const islandGeometry = new THREE.CylinderGeometry(70, 75, 4, 64);
     const islandMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.9 });
     island = new THREE.Mesh(islandGeometry, islandMaterial);
-    island.position.set(280, 0, 0);
+    island.position.set(ISLAND_CENTER_X, 0, ISLAND_CENTER_Z);
     island.receiveShadow = true;
     island.castShadow = true;
     scene.add(island);
 
-    // Sandstrand
-    const beach = new THREE.Mesh(
-        new THREE.TorusGeometry(42, 5, 4, 64),
-        new THREE.MeshStandardMaterial({ color: 0xF5DEB3, roughness: 0.95 })
-    );
-    beach.rotation.x = -Math.PI / 2;
-    beach.position.set(280, 1, 0);
+    // Strand-Ring (breiter, flacher Sandbereich statt Torus)
+    const beachGeo = new THREE.CylinderGeometry(85, 88, 2, 64);
+    const beachMat = new THREE.MeshStandardMaterial({ color: 0xF5DEB3, roughness: 0.95 });
+    const beach = new THREE.Mesh(beachGeo, beachMat);
+    beach.position.set(ISLAND_CENTER_X, -0.5, ISLAND_CENTER_Z);
+    beach.receiveShadow = true;
     scene.add(beach);
 
-    // Felsen
-    for (let i = 0; i < 15; i++) {
+    // Nasser Sand am Wasser
+    const wetSand = new THREE.Mesh(
+        new THREE.CylinderGeometry(87, 90, 1.5, 64),
+        new THREE.MeshStandardMaterial({ color: 0xC2A676, roughness: 0.9 })
+    );
+    wetSand.position.set(ISLAND_CENTER_X, -1.2, ISLAND_CENTER_Z);
+    wetSand.receiveShadow = true;
+    scene.add(wetSand);
+
+    // Felsen am Strand
+    for (let i = 0; i < 25; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const distance = 35 + Math.random() * 10;
+        const distance = 65 + Math.random() * 18;
         const rock = createRock();
-        rock.position.set(280 + Math.cos(angle) * distance, 1, Math.sin(angle) * distance);
+        rock.position.set(ISLAND_CENTER_X + Math.cos(angle) * distance, 0.5, ISLAND_CENTER_Z + Math.sin(angle) * distance);
         scene.add(rock);
     }
 
-    // Palmen
-    for (let i = 0; i < 20; i++) {
+    // Palmen verteilt über die Insel
+    for (let i = 0; i < 40; i++) {
         const palm = createPalmTree();
         const angle = Math.random() * Math.PI * 2;
-        const distance = 5 + Math.random() * 30;
-        palm.position.set(280 + Math.cos(angle) * distance, 2, Math.sin(angle) * distance);
+        const distance = 10 + Math.random() * 60;
+        // Nicht zu nah an Gebäude-Positionen
+        const px = ISLAND_CENTER_X + Math.cos(angle) * distance;
+        const pz = ISLAND_CENTER_Z + Math.sin(angle) * distance;
+        const distToHouse = Math.sqrt((px - ISLAND_CENTER_X) ** 2 + (pz - (-15)) ** 2);
+        const distToVilla = Math.sqrt((px - (ISLAND_CENTER_X + 30)) ** 2 + (pz - 25) ** 2);
+        if (distToHouse < 18 || distToVilla < 22) continue;
+        palm.position.set(px, 2, pz);
         scene.add(palm);
     }
 
     // Tropische Pflanzen
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 50; i++) {
         const plant = createTropicalPlant();
         const angle = Math.random() * Math.PI * 2;
-        const distance = Math.random() * 35;
-        plant.position.set(280 + Math.cos(angle) * distance, 2, Math.sin(angle) * distance);
+        const distance = Math.random() * 65;
+        plant.position.set(ISLAND_CENTER_X + Math.cos(angle) * distance, 2, ISLAND_CENTER_Z + Math.sin(angle) * distance);
         scene.add(plant);
+    }
+
+    // Blumen am Strand
+    for (let i = 0; i < 30; i++) {
+        const flower = createIslandFlower();
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 55 + Math.random() * 15;
+        flower.position.set(ISLAND_CENTER_X + Math.cos(angle) * distance, 1.5, ISLAND_CENTER_Z + Math.sin(angle) * distance);
+        scene.add(flower);
+    }
+
+    createIslandDetails();
+}
+
+function createIslandFlower() {
+    const flower = new THREE.Group();
+    const colors = [0xff69b4, 0xff4500, 0xffd700, 0xff1493, 0x9370db];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    const stem = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.03, 0.04, 0.5, 6),
+        new THREE.MeshStandardMaterial({ color: 0x228B22 })
+    );
+    stem.position.y = 0.25;
+    flower.add(stem);
+    for (let i = 0; i < 5; i++) {
+        const petal = new THREE.Mesh(
+            new THREE.SphereGeometry(0.12, 6, 6),
+            new THREE.MeshStandardMaterial({ color: color })
+        );
+        const a = (i / 5) * Math.PI * 2;
+        petal.position.set(Math.cos(a) * 0.15, 0.55, Math.sin(a) * 0.15);
+        flower.add(petal);
+    }
+    return flower;
+}
+
+function createIslandDetails() {
+    // Sandweg vom Steg zum Haupthaus
+    const pathLength = ISLAND_CENTER_X - ISLAND_DOCK_X + 5;
+    const path = new THREE.Mesh(
+        new THREE.BoxGeometry(pathLength, 0.15, 4.5),
+        new THREE.MeshStandardMaterial({ color: 0xdac29b, roughness: 0.95 })
+    );
+    path.position.set(ISLAND_DOCK_X + pathLength / 2 - 4, 2.12, 0);
+    path.receiveShadow = true;
+    scene.add(path);
+
+    // Weg zur Villa (abzweigend)
+    const villaPath = new THREE.Mesh(
+        new THREE.BoxGeometry(4.5, 0.15, 40),
+        new THREE.MeshStandardMaterial({ color: 0xdac29b, roughness: 0.95 })
+    );
+    villaPath.position.set(ISLAND_CENTER_X + 10, 2.12, 10);
+    villaPath.receiveShadow = true;
+    scene.add(villaPath);
+
+    // Kleine Feuerstelle am Strand
+    const firePit = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.5, 1.6, 0.4, 16),
+        new THREE.MeshStandardMaterial({ color: 0x4e342e, roughness: 0.9 })
+    );
+    firePit.position.set(ISLAND_CENTER_X - 20, 2.2, 30);
+    scene.add(firePit);
+
+    // Feuer-Licht
+    const fireLight = new THREE.PointLight(0xff6600, 0.8, 12);
+    fireLight.position.set(ISLAND_CENTER_X - 20, 3.5, 30);
+    scene.add(fireLight);
+
+    // Steine um Feuerstelle
+    for (let i = 0; i < 8; i++) {
+        const stone = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.4 + Math.random() * 0.3, 1),
+            new THREE.MeshStandardMaterial({ color: 0x6d6d6d, roughness: 0.9 })
+        );
+        const angle = (i / 8) * Math.PI * 2;
+        stone.position.set(ISLAND_CENTER_X - 20 + Math.cos(angle) * 1.8, 2.3, 30 + Math.sin(angle) * 1.8);
+        scene.add(stone);
+    }
+
+    // Sitzblöcke um Feuerstelle
+    for (let i = 0; i < 4; i++) {
+        const log = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.3, 0.35, 2, 8),
+            new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.9 })
+        );
+        const angle = (i / 4) * Math.PI * 2 + 0.3;
+        log.position.set(ISLAND_CENTER_X - 20 + Math.cos(angle) * 3.5, 2.4, 30 + Math.sin(angle) * 3.5);
+        log.rotation.z = Math.PI / 2;
+        scene.add(log);
+    }
+
+    // Hängematte zwischen Palmen
+    const hammockPole1 = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.15, 4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e })
+    );
+    hammockPole1.position.set(ISLAND_CENTER_X + 40, 4, -20);
+    scene.add(hammockPole1);
+    
+    const hammockPole2 = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.15, 0.15, 4, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e })
+    );
+    hammockPole2.position.set(ISLAND_CENTER_X + 46, 4, -20);
+    scene.add(hammockPole2);
+    
+    const hammock = new THREE.Mesh(
+        new THREE.BoxGeometry(5, 0.1, 2),
+        new THREE.MeshStandardMaterial({ color: 0xff6347, roughness: 0.8 })
+    );
+    hammock.position.set(ISLAND_CENTER_X + 43, 3.5, -20);
+    scene.add(hammock);
+
+    // Kleine Strandbar
+    const barBase = new THREE.Mesh(
+        new THREE.BoxGeometry(5, 1.2, 2),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    barBase.position.set(ISLAND_CENTER_X - 35, 2.6, -15);
+    scene.add(barBase);
+
+    const barRoof = new THREE.Mesh(
+        new THREE.BoxGeometry(7, 0.2, 4),
+        new THREE.MeshStandardMaterial({ color: 0x228B22 })
+    );
+    barRoof.position.set(ISLAND_CENTER_X - 35, 5, -15);
+    scene.add(barRoof);
+
+    // Barhocker
+    for (let i = 0; i < 3; i++) {
+        const stool = new THREE.Group();
+        const seat = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.35, 0.35, 0.15, 12),
+            new THREE.MeshStandardMaterial({ color: 0x8B4513 })
+        );
+        seat.position.y = 1;
+        stool.add(seat);
+        const leg = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.08, 0.08, 1, 8),
+            new THREE.MeshStandardMaterial({ color: 0x333333 })
+        );
+        leg.position.y = 0.5;
+        stool.add(leg);
+        stool.position.set(ISLAND_CENTER_X - 35 + (i - 1) * 1.8, 2, -17);
+        scene.add(stool);
     }
 }
 
@@ -2176,7 +2862,7 @@ function createBoatSystem() {
     const dockMaterial = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.8 });
     
     boatDock = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 15), dockMaterial);
-    boatDock.position.set(200, 1.5, 0);
+    boatDock.position.set(MAINLAND_DOCK_X, 1.5, 0);
     boatDock.castShadow = true;
     scene.add(boatDock);
 
@@ -2186,15 +2872,20 @@ function createBoatSystem() {
             new THREE.CylinderGeometry(0.5, 0.5, 4, 8),
             new THREE.MeshStandardMaterial({ color: 0x3d2817 })
         );
-        pillar.position.set(204, 0, i * 6);
+        pillar.position.set(MAINLAND_DOCK_X + 4, 0, i * 6);
         pillar.castShadow = true;
         scene.add(pillar);
     }
 
     islandDock = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 15), dockMaterial);
-    islandDock.position.set(235, 1.5, 0);
+    islandDock.position.set(ISLAND_DOCK_X, 1.5, 0);
     islandDock.castShadow = true;
     scene.add(islandDock);
+
+    createDockDetails(boatDock, false);
+    createDockDetails(islandDock, true);
+    createMainlandHarborArea();
+    createIslandHarborArea();
 
     createBoat();
 }
@@ -2202,151 +2893,353 @@ function createBoatSystem() {
 function createBoat() {
     boat = new THREE.Group();
 
-    const hull = new THREE.Mesh(
-        new THREE.BoxGeometry(4, 2, 8),
-        new THREE.MeshStandardMaterial({ color: 0xF5F5DC, roughness: 0.5 })
-    );
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.65 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.55 });
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x4a6670, roughness: 0.1, transparent: true, opacity: 0.6 });
+
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.4, 9), hullMat);
+    hull.position.y = 0.6;
     hull.castShadow = true;
     boat.add(hull);
 
-    const bottom = new THREE.Mesh(
-        new THREE.BoxGeometry(3.8, 0.5, 7.8),
-        new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.6 })
-    );
-    bottom.position.y = -0.75;
-    boat.add(bottom);
+    const bow = new THREE.Mesh(new THREE.ConeGeometry(2.2, 3.2, 12), hullMat);
+    bow.rotation.x = Math.PI / 2;
+    bow.position.set(0, 0.4, 6.2);
+    boat.add(bow);
 
-    const interior = new THREE.Mesh(
-        new THREE.BoxGeometry(3.5, 0.8, 7),
-        new THREE.MeshStandardMaterial({ color: 0xDEB887 })
-    );
-    interior.position.y = 0.6;
-    boat.add(interior);
+    const stern = new THREE.Mesh(new THREE.ConeGeometry(1.6, 2.4, 12), hullMat);
+    stern.rotation.x = -Math.PI / 2;
+    stern.position.set(0, 0.45, -6.1);
+    boat.add(stern);
 
-    const mast = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.15, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0x4a3000, roughness: 0.7 })
-    );
-    mast.position.set(0, 5, 0);
-    mast.castShadow = true;
-    boat.add(mast);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.4, 6.2), trimMat);
+    deck.position.y = 1.2;
+    boat.add(deck);
 
-    const sail = new THREE.Mesh(
-        new THREE.PlaneGeometry(3, 5),
-        new THREE.MeshStandardMaterial({ color: 0xFFFFF0, side: THREE.DoubleSide, roughness: 0.4 })
-    );
-    sail.position.set(1.5, 5.5, 0);
-    sail.rotation.y = Math.PI / 2;
-    sail.castShadow = true;
-    boat.add(sail);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.4, 2.6), trimMat);
+    cabin.position.set(0, 1.8, 0.8);
+    cabin.castShadow = true;
+    boat.add(cabin);
+
+    const frontWindow = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 0.05), glassMat);
+    frontWindow.position.set(0, 2.0, 2.1);
+    boat.add(frontWindow);
+
+    const leftWindow = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 1.4), glassMat);
+    leftWindow.position.set(-1.1, 2.0, 0.8);
+    boat.add(leftWindow);
+
+    const rightWindow = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, 1.4), glassMat);
+    rightWindow.position.set(1.1, 2.0, 0.8);
+    boat.add(rightWindow);
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.8 });
+    [-2.1, 2.1].forEach(x => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.25, 6.6), railMat);
+        rail.position.set(x, 1.5, -0.2);
+        boat.add(rail);
+    });
 
     const wheel = new THREE.Mesh(
-        new THREE.TorusGeometry(0.4, 0.05, 8, 16),
+        new THREE.TorusGeometry(0.35, 0.05, 8, 16),
         new THREE.MeshStandardMaterial({ color: 0x4a3000, roughness: 0.6 })
     );
-    wheel.position.set(0, 1.5, -3);
+    wheel.position.set(0.8, 1.7, 1.7);
     wheel.rotation.x = Math.PI / 2;
     boat.add(wheel);
 
-    boat.position.set(240, 1, 0); // Boot startet bei der Insel
+    boat.position.set(BOAT_ISLAND_X, 1, 0); // Boot startet bei der Insel
     scene.add(boat);
 }
 
+function createDockDetails(dockMesh, isIsland) {
+    const dockGroup = new THREE.Group();
+    const plankMat = new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 0.9 });
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x4e342e, roughness: 0.95 });
+
+    const extension = new THREE.Mesh(new THREE.BoxGeometry(8, 0.6, 12), plankMat);
+    extension.position.set(0, -0.2, -8);
+    dockGroup.add(extension);
+
+    for (let i = -3; i <= 3; i += 3) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 3.2, 8), postMat);
+        post.position.set(i, -1.2, -13);
+        post.castShadow = true;
+        dockGroup.add(post);
+    }
+
+    for (let z = -2; z >= -10; z -= 4) {
+        const plank = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.15, 1.2), plankMat);
+        plank.position.set(0, 0.2, z);
+        dockGroup.add(plank);
+    }
+
+    if (isIsland) {
+        const hut = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 2), plankMat);
+        hut.position.set(-3, 1.0, 2.5);
+        hut.castShadow = true;
+        dockGroup.add(hut);
+    } else {
+        const crane = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 3.5, 8), postMat);
+        crane.position.set(3.2, 1.4, 3.5);
+        dockGroup.add(crane);
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 2.2), postMat);
+        arm.position.set(3.2, 3.1, 2.3);
+        dockGroup.add(arm);
+    }
+
+    dockGroup.position.copy(dockMesh.position);
+    scene.add(dockGroup);
+}
+
+function createMainlandHarborArea() {
+    const baseX = MAINLAND_DOCK_X - 18;
+    const baseZ = -8;
+    const ground = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 0.2, 18),
+        new THREE.MeshStandardMaterial({ color: 0x9e9e9e, roughness: 0.9 })
+    );
+    ground.position.set(baseX, 0.05, baseZ);
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    for (let i = 0; i < 6; i++) {
+        const crate = new THREE.Mesh(
+            new THREE.BoxGeometry(1.4, 1.2, 1.4),
+            new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.9 })
+        );
+        crate.position.set(baseX - 8 + Math.random() * 10, 0.7, baseZ - 5 + Math.random() * 8);
+        crate.castShadow = true;
+        scene.add(crate);
+    }
+
+    for (let i = 0; i < 3; i++) {
+        const barrel = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.6, 0.6, 1.4, 12),
+            new THREE.MeshStandardMaterial({ color: 0x5d4037, roughness: 0.8 })
+        );
+        barrel.position.set(baseX + 6 + Math.random() * 4, 0.7, baseZ + 3 + Math.random() * 4);
+        barrel.castShadow = true;
+        scene.add(barrel);
+    }
+
+    const kiosk = new THREE.Mesh(
+        new THREE.BoxGeometry(4.5, 2.4, 3.5),
+        new THREE.MeshStandardMaterial({ color: 0xb0bec5, roughness: 0.7 })
+    );
+    kiosk.position.set(baseX - 2, 1.2, baseZ + 6);
+    kiosk.castShadow = true;
+    scene.add(kiosk);
+
+    const kioskRoof = new THREE.Mesh(
+        new THREE.BoxGeometry(5.2, 0.4, 4.2),
+        new THREE.MeshStandardMaterial({ color: 0x78909c, roughness: 0.6 })
+    );
+    kioskRoof.position.set(baseX - 2, 2.6, baseZ + 6);
+    scene.add(kioskRoof);
+
+    const bench = createBench();
+    bench.position.set(baseX + 2, 0.1, baseZ + 8);
+    bench.rotation.y = Math.PI / 2;
+    scene.add(bench);
+
+    for (let i = 0; i < 2; i++) {
+        const lamp = createHarborLamp();
+        lamp.position.set(baseX + 12, 0, baseZ - 6 + i * 8);
+        scene.add(lamp);
+    }
+}
+
+function createIslandHarborArea() {
+    const baseX = ISLAND_DOCK_X + 15;
+    const baseZ = -4;
+    const sand = new THREE.Mesh(
+        new THREE.BoxGeometry(30, 0.2, 14),
+        new THREE.MeshStandardMaterial({ color: 0xd8c39a, roughness: 0.95 })
+    );
+    sand.position.set(baseX, 2.05, baseZ);
+    sand.receiveShadow = true;
+    scene.add(sand);
+
+    for (let i = 0; i < 6; i++) {
+        const palm = createPalmTree();
+        palm.position.set(baseX - 8 + Math.random() * 16, 2.5, baseZ - 5 + Math.random() * 10);
+        scene.add(palm);
+    }
+}
+
+function createHarborLamp() {
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x2f2f2f, roughness: 0.4, metalness: 0.6 });
+    const lamp = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 4.5, 8), poleMat);
+    pole.position.y = 2.2;
+    pole.castShadow = true;
+    lamp.add(pole);
+
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 1.2), poleMat);
+    arm.position.set(0, 4.2, 0.6);
+    lamp.add(arm);
+
+    const housing = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.15, 0.4),
+        new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5 })
+    );
+    housing.position.set(0, 4.1, 1.1);
+    lamp.add(housing);
+
+    const light = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 0.08, 0.35),
+        new THREE.MeshStandardMaterial({ color: 0xfff3c1, emissive: 0xffe082, emissiveIntensity: 0.4 })
+    );
+    light.position.set(0, 4.0, 1.1);
+    lamp.add(light);
+
+    return lamp;
+}
+
 // ==========================================
-// HAUS AUF DER INSEL (BEGEHBAR MIT ALIEN-GEFÄNGNISSEN)
+// HAUS AUF DER INSEL (BEGEHBAR MIT 3 STOCKWERKEN)
 // ==========================================
 let alienPrisons = [];
 let insideHouse = false;
+let storageChest = null;
+let chestItems = [];
+let chestOpen = false;
+let villa = null;
 
 function createHouse() {
     house = new THREE.Group();
     alienPrisons = [];
 
-    const houseX = 280;
-    const houseZ = -10;
+    const houseX = ISLAND_CENTER_X;
+    const houseZ = -15;
     const floorY = 2;
+    const FLOOR_HEIGHT = 4;
+    const WALL_THICK = 0.4;
+    const HOUSE_W = 22;
+    const HOUSE_D = 18;
 
-    // Fundament
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xFFFACD, roughness: 0.8 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 });
+    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xf5f0e0, roughness: 0.8 });
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x696969, roughness: 0.9 });
+
+    // ======= FUNDAMENT =======
     const foundation = new THREE.Mesh(
-        new THREE.BoxGeometry(20, 1, 16),
-        new THREE.MeshStandardMaterial({ color: 0x696969, roughness: 0.9 })
+        new THREE.BoxGeometry(HOUSE_W + 2, 1, HOUSE_D + 2),
+        stoneMat
     );
     foundation.position.y = 0.5;
     foundation.castShadow = true;
     house.add(foundation);
 
-    // Boden (innen)
-    const floor = new THREE.Mesh(
-        new THREE.BoxGeometry(18, 0.3, 14),
-        new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 })
-    );
-    floor.position.y = 1.15;
-    floor.receiveShadow = true;
-    house.add(floor);
+    // ======= 3 STOCKWERKE BAUEN =======
+    for (let floor = 0; floor < 3; floor++) {
+        const baseY = 1 + floor * FLOOR_HEIGHT;
 
-    // Wände mit Türöffnung
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFACD, roughness: 0.8 });
-    
-    // Rückwand
-    const backWall = new THREE.Mesh(
-        new THREE.BoxGeometry(18, 8, 0.5),
-        wallMaterial
-    );
-    backWall.position.set(0, 5.15, -7);
-    backWall.castShadow = true;
-    house.add(backWall);
+        // Boden
+        const floorMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(HOUSE_W, 0.3, HOUSE_D),
+            floorMat
+        );
+        floorMesh.position.y = baseY + 0.15;
+        floorMesh.receiveShadow = true;
+        house.add(floorMesh);
 
-    // Linke Wand
-    const leftWall = new THREE.Mesh(
-        new THREE.BoxGeometry(0.5, 8, 14),
-        wallMaterial
-    );
-    leftWall.position.set(-9, 5.15, 0);
-    leftWall.castShadow = true;
-    house.add(leftWall);
+        // Rückwand
+        const bw = new THREE.Mesh(new THREE.BoxGeometry(HOUSE_W, FLOOR_HEIGHT, WALL_THICK), wallMat);
+        bw.position.set(0, baseY + FLOOR_HEIGHT / 2, -HOUSE_D / 2);
+        bw.castShadow = true;
+        house.add(bw);
 
-    // Rechte Wand
-    const rightWall = new THREE.Mesh(
-        new THREE.BoxGeometry(0.5, 8, 14),
-        wallMaterial
-    );
-    rightWall.position.set(9, 5.15, 0);
-    rightWall.castShadow = true;
-    house.add(rightWall);
+        // Linke Wand
+        const lw = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, FLOOR_HEIGHT, HOUSE_D), wallMat);
+        lw.position.set(-HOUSE_W / 2, baseY + FLOOR_HEIGHT / 2, 0);
+        lw.castShadow = true;
+        house.add(lw);
 
-    // Vorderwand mit Türöffnung (links)
-    const frontWallLeft = new THREE.Mesh(
-        new THREE.BoxGeometry(6, 8, 0.5),
-        wallMaterial
-    );
-    frontWallLeft.position.set(-6, 5.15, 7);
-    frontWallLeft.castShadow = true;
-    house.add(frontWallLeft);
+        // Rechte Wand
+        const rw = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICK, FLOOR_HEIGHT, HOUSE_D), wallMat);
+        rw.position.set(HOUSE_W / 2, baseY + FLOOR_HEIGHT / 2, 0);
+        rw.castShadow = true;
+        house.add(rw);
 
-    // Vorderwand mit Türöffnung (rechts)
-    const frontWallRight = new THREE.Mesh(
-        new THREE.BoxGeometry(6, 8, 0.5),
-        wallMaterial
-    );
-    frontWallRight.position.set(6, 5.15, 7);
-    frontWallRight.castShadow = true;
-    house.add(frontWallRight);
+        // Vorderwand mit Türöffnung (nur EG) oder komplett
+        if (floor === 0) {
+            // Links von Tür
+            const fwl = new THREE.Mesh(new THREE.BoxGeometry(7, FLOOR_HEIGHT, WALL_THICK), wallMat);
+            fwl.position.set(-7.5, baseY + FLOOR_HEIGHT / 2, HOUSE_D / 2);
+            house.add(fwl);
+            // Rechts von Tür
+            const fwr = new THREE.Mesh(new THREE.BoxGeometry(7, FLOOR_HEIGHT, WALL_THICK), wallMat);
+            fwr.position.set(7.5, baseY + FLOOR_HEIGHT / 2, HOUSE_D / 2);
+            house.add(fwr);
+            // Über Tür
+            const fwt = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, WALL_THICK), wallMat);
+            fwt.position.set(0, baseY + FLOOR_HEIGHT - 0.6, HOUSE_D / 2);
+            house.add(fwt);
+        } else {
+            // Fenster in Vorderwand
+            const fwl2 = new THREE.Mesh(new THREE.BoxGeometry(8, FLOOR_HEIGHT, WALL_THICK), wallMat);
+            fwl2.position.set(-7, baseY + FLOOR_HEIGHT / 2, HOUSE_D / 2);
+            house.add(fwl2);
+            const fwr2 = new THREE.Mesh(new THREE.BoxGeometry(8, FLOOR_HEIGHT, WALL_THICK), wallMat);
+            fwr2.position.set(7, baseY + FLOOR_HEIGHT / 2, HOUSE_D / 2);
+            house.add(fwr2);
+            const fwt2 = new THREE.Mesh(new THREE.BoxGeometry(6, 1.5, WALL_THICK), wallMat);
+            fwt2.position.set(0, baseY + FLOOR_HEIGHT - 0.75, HOUSE_D / 2);
+            house.add(fwt2);
+            const fwb2 = new THREE.Mesh(new THREE.BoxGeometry(6, 1, WALL_THICK), wallMat);
+            fwb2.position.set(0, baseY + 0.5, HOUSE_D / 2);
+            house.add(fwb2);
+            // Fenster Glas
+            const winGlass = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.5, 0.1),
+                new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4 }));
+            winGlass.position.set(0, baseY + 2, HOUSE_D / 2 + 0.2);
+            house.add(winGlass);
+        }
 
-    // Vorderwand über Tür
-    const frontWallTop = new THREE.Mesh(
-        new THREE.BoxGeometry(6, 3, 0.5),
-        wallMaterial
-    );
-    frontWallTop.position.set(0, 7.65, 7);
-    frontWallTop.castShadow = true;
-    house.add(frontWallTop);
+        // Seitenfenster
+        const winMat = new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4, roughness: 0.1 });
+        [-1, 1].forEach(side => {
+            const win = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.8, 2.5), winMat);
+            win.position.set(side * (HOUSE_W / 2 + 0.1), baseY + 2.2, -2);
+            house.add(win);
+            const win2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.8, 2.5), winMat);
+            win2.position.set(side * (HOUSE_W / 2 + 0.1), baseY + 2.2, 4);
+            house.add(win2);
+        });
 
-    // Dach
+        // Innenbeleuchtung pro Stockwerk
+        const light = new THREE.PointLight(0xffcc77, 0.8, 18);
+        light.position.set(0, baseY + 3.5, 0);
+        house.add(light);
+
+        // ======= TREPPE ZUM NÄCHSTEN STOCKWERK =======
+        if (floor < 2) {
+            const stairMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.8 });
+            for (let s = 0; s < 10; s++) {
+                const step = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 0.8), stairMat);
+                step.position.set(HOUSE_W / 2 - 2, baseY + 0.3 + s * (FLOOR_HEIGHT / 10), -HOUSE_D / 2 + 1.5 + s * 0.8);
+                step.castShadow = true;
+                house.add(step);
+            }
+            // Treppengeländer
+            const railing = new THREE.Mesh(
+                new THREE.BoxGeometry(0.1, 1.2, HOUSE_D - 4),
+                new THREE.MeshStandardMaterial({ color: 0x5c3a1e })
+            );
+            railing.position.set(HOUSE_W / 2 - 3.3, baseY + FLOOR_HEIGHT / 2 + 0.6, 0);
+            house.add(railing);
+        }
+    }
+
+    // ======= DACH =======
     const roof = new THREE.Mesh(
-        new THREE.ConeGeometry(14, 6, 4),
-        new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7 })
+        new THREE.ConeGeometry(17, 6, 4),
+        new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 })
     );
-    roof.position.y = 12;
+    roof.position.y = 1 + 3 * 4 + 3;
     roof.rotation.y = Math.PI / 4;
     roof.castShadow = true;
     house.add(roof);
@@ -2356,32 +3249,23 @@ function createHouse() {
         new THREE.BoxGeometry(1.5, 5, 1.5),
         new THREE.MeshStandardMaterial({ color: 0x8B0000 })
     );
-    chimney.position.set(4, 13, 3);
+    chimney.position.set(5, 1 + 3 * 4 + 5, 3);
     chimney.castShadow = true;
     house.add(chimney);
 
-    // Innenbeleuchtung
-    const insideLight = new THREE.PointLight(0xffcc77, 1, 20);
-    insideLight.position.set(0, 6, 0);
-    house.add(insideLight);
-
-    // ==========================================
-    // ALIEN-GEFÄNGNISSE IM HAUS
-    // ==========================================
+    // ======= EG: GEFÄNGNISSE + TRUHE =======
     const prisonPositions = [
-        { x: -6, z: -4 },
-        { x: 0, z: -4 },
-        { x: 6, z: -4 },
-        { x: -6, z: 2 },
-        { x: 6, z: 2 }
+        { x: -7, z: -5 },
+        { x: -3, z: -5 },
+        { x: 3, z: -5 },
+        { x: 7, z: -5 },
+        { x: -7, z: 3 }
     ];
 
     prisonPositions.forEach((pos, index) => {
         const prison = createAlienPrison(index);
         prison.position.set(pos.x, 1.15, pos.z);
         house.add(prison);
-        
-        // Speichere die Weltposition für Kollisionserkennung
         alienPrisons.push({
             mesh: prison,
             localPos: pos,
@@ -2392,61 +3276,743 @@ function createHouse() {
         });
     });
 
-    // Fenster (außen)
-    const windowMaterial = new THREE.MeshStandardMaterial({
-        color: 0x87CEEB,
-        transparent: true,
-        opacity: 0.5,
-        roughness: 0.1
-    });
+    // Truhe (Lager) im EG
+    storageChest = createStorageChest();
+    storageChest.position.set(7, 1.15, 4);
+    house.add(storageChest);
 
-    // Fenster links
-    const windowLeft = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 0.3), windowMaterial);
-    windowLeft.position.set(-6, 5, 7.2);
-    house.add(windowLeft);
+    // Tisch im EG
+    const table = createWoodTable();
+    table.position.set(0, 1.15, 3);
+    house.add(table);
 
-    // Fenster rechts
-    const windowRight = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 0.3), windowMaterial);
-    windowRight.position.set(6, 5, 7.2);
-    house.add(windowRight);
+    // ======= 1. OG: SCHLAFZIMMER =======
+    const bed = createBed();
+    bed.position.set(-6, 5.15, -4);
+    house.add(bed);
 
-    // Veranda
+    // Nachttisch
+    const nightstand = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 0.8, 1),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    nightstand.position.set(-3.5, 5.55, -5);
+    house.add(nightstand);
+    // Lampe auf Nachttisch
+    const nsLamp = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.2, 0.3, 0.6, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffa000, emissiveIntensity: 0.3 })
+    );
+    nsLamp.position.set(-3.5, 6.2, -5);
+    house.add(nsLamp);
+
+    // Kleiderschrank 1. OG
+    const wardrobe = new THREE.Mesh(
+        new THREE.BoxGeometry(3, 3, 1.2),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    wardrobe.position.set(6, 6.65, -7.5);
+    house.add(wardrobe);
+
+    // Teppich 1.OG
+    const carpet = new THREE.Mesh(
+        new THREE.BoxGeometry(6, 0.05, 4),
+        new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.95 })
+    );
+    carpet.position.set(-3, 5.2, 2);
+    house.add(carpet);
+
+    // Zweite Truhe 1. OG
+    const chest2 = createStorageChest();
+    chest2.position.set(6, 5.15, 4);
+    house.add(chest2);
+
+    // ======= 2. OG: BÜRO/BEOBACHTUNGSRAUM =======
+    // Schreibtisch
+    const desk = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 1, 2),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    desk.position.set(0, 9.65, -6);
+    house.add(desk);
+
+    // Stuhl vor Schreibtisch
+    const chair = createChair();
+    chair.position.set(0, 9.15, -4);
+    house.add(chair);
+
+    // Bücherregal 2. OG
+    const bookshelf = createBookshelf();
+    bookshelf.position.set(-8, 9.15, -2);
+    house.add(bookshelf);
+
+    // Fernrohr / Teleskop
+    const telescope = createTelescope();
+    telescope.position.set(5, 9.15, 5);
+    house.add(telescope);
+
+    // ======= VERANDA =======
     const veranda = new THREE.Mesh(
-        new THREE.BoxGeometry(20, 0.3, 5),
+        new THREE.BoxGeometry(HOUSE_W + 4, 0.3, 6),
         new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 })
     );
-    veranda.position.set(0, 1.15, 10);
+    veranda.position.set(0, 1.15, HOUSE_D / 2 + 3);
     veranda.castShadow = true;
     house.add(veranda);
 
     // Stufen zur Tür
     for (let i = 0; i < 3; i++) {
         const step = new THREE.Mesh(
-            new THREE.BoxGeometry(4, 0.3, 1),
-            new THREE.MeshStandardMaterial({ color: 0x696969, roughness: 0.9 })
+            new THREE.BoxGeometry(5, 0.3, 1),
+            stoneMat
         );
-        step.position.set(0, 0.15 + i * 0.3, 8.5 + i);
+        step.position.set(0, 0.15 + i * 0.3, HOUSE_D / 2 + 6.5 + i);
         step.castShadow = true;
         house.add(step);
     }
+
+    // Veranda-Geländer
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xf5f0e0 });
+    [-1, 1].forEach(side => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.2, 6), railMat);
+        rail.position.set(side * (HOUSE_W / 2 + 1.8), 1.9, HOUSE_D / 2 + 3);
+        house.add(rail);
+    });
+    const frontRailL = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 0.15), railMat);
+    frontRailL.position.set(-8, 1.9, HOUSE_D / 2 + 5.8);
+    house.add(frontRailL);
+    const frontRailR = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 0.15), railMat);
+    frontRailR.position.set(8, 1.9, HOUSE_D / 2 + 5.8);
+    house.add(frontRailR);
 
     // Willkommens-Schild
     const signPost = new THREE.Mesh(
         new THREE.CylinderGeometry(0.1, 0.1, 2, 8),
         new THREE.MeshStandardMaterial({ color: 0x4a3000 })
     );
-    signPost.position.set(-8, 2, 12);
+    signPost.position.set(-10, 2, HOUSE_D / 2 + 8);
     house.add(signPost);
-
     const sign = new THREE.Mesh(
-        new THREE.BoxGeometry(3, 1.5, 0.2),
+        new THREE.BoxGeometry(3.5, 1.5, 0.2),
         new THREE.MeshStandardMaterial({ color: 0x8B4513 })
     );
-    sign.position.set(-8, 3.2, 12);
+    sign.position.set(-10, 3.2, HOUSE_D / 2 + 8);
     house.add(sign);
 
     house.position.set(houseX, floorY, houseZ);
     scene.add(house);
+
+    // ======= ZWEITE VILLA =======
+    createVilla();
+}
+
+// ======= MÖBEL-HELFER =======
+function createBed() {
+    const bed = new THREE.Group();
+    // Bettrahmen
+    const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 0.5, 3),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    frame.position.y = 0.25;
+    bed.add(frame);
+    // Matratze
+    const mattress = new THREE.Mesh(
+        new THREE.BoxGeometry(3.6, 0.4, 2.6),
+        new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.9 })
+    );
+    mattress.position.y = 0.7;
+    bed.add(mattress);
+    // Kissen
+    const pillow = new THREE.Mesh(
+        new THREE.BoxGeometry(1.5, 0.3, 0.8),
+        new THREE.MeshStandardMaterial({ color: 0xadd8e6, roughness: 0.9 })
+    );
+    pillow.position.set(0, 0.95, -0.8);
+    bed.add(pillow);
+    // Decke
+    const blanket = new THREE.Mesh(
+        new THREE.BoxGeometry(3.4, 0.15, 1.8),
+        new THREE.MeshStandardMaterial({ color: 0x4169e1, roughness: 0.9 })
+    );
+    blanket.position.set(0, 0.95, 0.3);
+    bed.add(blanket);
+    // Kopfteil
+    const headboard = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 1.5, 0.3),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    headboard.position.set(0, 1.0, -1.35);
+    bed.add(headboard);
+    return bed;
+}
+
+function createStorageChest() {
+    const chest = new THREE.Group();
+    // Basis
+    const base = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 1, 1.2),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    base.position.y = 0.5;
+    chest.add(base);
+    // Deckel
+    const lid = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1, 0.3, 1.3),
+        new THREE.MeshStandardMaterial({ color: 0x4a2f15, roughness: 0.7 })
+    );
+    lid.position.y = 1.15;
+    chest.add(lid);
+    // Metallverzierung
+    const band1 = new THREE.Mesh(
+        new THREE.BoxGeometry(2.15, 0.12, 0.08),
+        new THREE.MeshStandardMaterial({ color: 0xb8860b, metalness: 0.8, roughness: 0.3 })
+    );
+    band1.position.set(0, 0.7, 0.62);
+    chest.add(band1);
+    const band2 = band1.clone();
+    band2.position.set(0, 0.3, 0.62);
+    chest.add(band2);
+    // Schloss
+    const lock = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.3, 0.12),
+        new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9, roughness: 0.2 })
+    );
+    lock.position.set(0, 1.0, 0.66);
+    chest.add(lock);
+    chest.userData.isChest = true;
+    return chest;
+}
+
+function createWoodTable() {
+    const table = new THREE.Group();
+    const top = new THREE.Mesh(
+        new THREE.BoxGeometry(3, 0.2, 2),
+        new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 })
+    );
+    top.position.y = 1;
+    table.add(top);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e });
+    [[-1.2, -0.7], [1.2, -0.7], [-1.2, 0.7], [1.2, 0.7]].forEach(([x, z]) => {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), legMat);
+        leg.position.set(x, 0.5, z);
+        table.add(leg);
+    });
+    return table;
+}
+
+function createChair() {
+    const chair = new THREE.Group();
+    const seat = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 0.15, 1),
+        new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 })
+    );
+    seat.position.y = 0.6;
+    chair.add(seat);
+    const back = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 0.15),
+        new THREE.MeshStandardMaterial({ color: 0x8B4513 })
+    );
+    back.position.set(0, 1.1, -0.42);
+    chair.add(back);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e });
+    [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]].forEach(([x, z]) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 6), legMat);
+        leg.position.set(x, 0.3, z);
+        chair.add(leg);
+    });
+    return chair;
+}
+
+function createBookshelf() {
+    const shelf = new THREE.Group();
+    const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(2.5, 3, 0.8),
+        new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 })
+    );
+    frame.position.y = 1.5;
+    shelf.add(frame);
+    // Bücher
+    const bookColors = [0x8B0000, 0x00008B, 0x006400, 0x8B8B00, 0x4B0082];
+    for (let r = 0; r < 3; r++) {
+        for (let b = 0; b < 4; b++) {
+            const book = new THREE.Mesh(
+                new THREE.BoxGeometry(0.4, 0.8, 0.5),
+                new THREE.MeshStandardMaterial({ color: bookColors[(r * 4 + b) % bookColors.length] })
+            );
+            book.position.set(-0.8 + b * 0.5, 0.5 + r * 1, 0);
+            shelf.add(book);
+        }
+    }
+    return shelf;
+}
+
+function createTelescope() {
+    const tele = new THREE.Group();
+    // Stativ
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7 });
+    for (let i = 0; i < 3; i++) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2, 6), legMat);
+        const a = (i / 3) * Math.PI * 2;
+        leg.position.set(Math.cos(a) * 0.5, 1, Math.sin(a) * 0.5);
+        leg.rotation.x = Math.cos(a) * 0.2;
+        leg.rotation.z = Math.sin(a) * 0.2;
+        tele.add(leg);
+    }
+    // Rohr
+    const tube = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.2, 1.5, 12),
+        new THREE.MeshStandardMaterial({ color: 0xb8860b, metalness: 0.6 })
+    );
+    tube.position.y = 2.2;
+    tube.rotation.x = 0.5;
+    tele.add(tube);
+    return tele;
+}
+
+// ==========================================
+// GROSSE VILLA (ZWEITES GEBÄUDE)
+// ==========================================
+function createVilla() {
+    villa = new THREE.Group();
+    const VW = 28; // Breite
+    const VD = 22; // Tiefe
+    const FLOOR_H = 4;
+    const WALL_T = 0.4;
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xf5ebe0, roughness: 0.7 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x654321, roughness: 0.8 });
+    const tileMat = new THREE.MeshStandardMaterial({ color: 0xdcdcdc, roughness: 0.6 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x2f4f4f, roughness: 0.6 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.8 });
+    const darkWoodMat = new THREE.MeshStandardMaterial({ color: 0x3b2110, roughness: 0.7 });
+
+    // ======= KELLER (unterirdisch) =======
+    // Kellerboden
+    const basementFloor = new THREE.Mesh(new THREE.BoxGeometry(VW, 0.3, VD), tileMat);
+    basementFloor.position.y = -3.85;
+    villa.add(basementFloor);
+
+    // Kellerwände
+    const kellerWallH = 4;
+    const bkw = new THREE.Mesh(new THREE.BoxGeometry(VW, kellerWallH, WALL_T),
+        new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.9 }));
+    bkw.position.set(0, -2, -VD / 2);
+    villa.add(bkw);
+    const lkw = bkw.clone(); lkw.rotation.y = Math.PI / 2;
+    lkw.position.set(-VW / 2, -2, 0);
+    lkw.geometry = new THREE.BoxGeometry(WALL_T, kellerWallH, VD);
+    villa.add(lkw);
+    const rkw = lkw.clone();
+    rkw.position.set(VW / 2, -2, 0);
+    villa.add(rkw);
+    const fkw = bkw.clone();
+    fkw.position.set(0, -2, VD / 2);
+    villa.add(fkw);
+
+    // Kellerbeleuchtung
+    const kellerLight = new THREE.PointLight(0xffffff, 0.6, 20);
+    kellerLight.position.set(0, -0.5, 0);
+    villa.add(kellerLight);
+
+    // ===== TRAININGSRAUM IM KELLER =====
+    // Boxsack
+    const punchBag = new THREE.Group();
+    const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6),
+        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9 }));
+    chain.position.y = -0.5;
+    punchBag.add(chain);
+    const bag = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.45, 1.5, 12),
+        new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.9 }));
+    bag.position.y = -1.8;
+    punchBag.add(bag);
+    punchBag.position.set(-8, 0, -5);
+    villa.add(punchBag);
+
+    // Hantelbank
+    const bench = new THREE.Group();
+    const benchSeat = new THREE.Mesh(new THREE.BoxGeometry(1, 0.2, 3), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
+    benchSeat.position.y = -3;
+    bench.add(benchSeat);
+    const benchLegs = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.8 });
+    [[-0.4, -1.2], [-0.4, 1.2], [0.4, -1.2], [0.4, 1.2]].forEach(([x, z]) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.8, 6), benchLegs);
+        leg.position.set(x, -3.5, z);
+        bench.add(leg);
+    });
+    // Hantelstange
+    const barbell = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3, 8),
+        new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.9 }));
+    barbell.position.set(0, -2.2, -1.2);
+    barbell.rotation.x = Math.PI / 2;
+    bench.add(barbell);
+    // Gewichte
+    [-1.3, 1.3].forEach(z => {
+        const weight = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.15, 16),
+            new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.7 }));
+        weight.position.set(0, -2.2, -1.2 + z);
+        bench.add(weight);
+    });
+    bench.position.set(3, 0, -3);
+    villa.add(bench);
+
+    // Laufband
+    const treadmill = new THREE.Group();
+    const tBase = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.3, 3.5),
+        new THREE.MeshStandardMaterial({ color: 0x222222 }));
+    tBase.position.y = -3.55;
+    treadmill.add(tBase);
+    const belt = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 3),
+        new THREE.MeshStandardMaterial({ color: 0x333333 }));
+    belt.position.y = -3.35;
+    treadmill.add(belt);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1, 0.15),
+        new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
+    panel.position.set(0, -2.5, -1.7);
+    treadmill.add(panel);
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x003300, emissiveIntensity: 0.5 }));
+    screen.position.set(0, -2.3, -1.75);
+    treadmill.add(screen);
+    treadmill.position.set(-3, 0, 5);
+    villa.add(treadmill);
+
+    // Spiegel an der Wand
+    const mirror = new THREE.Mesh(new THREE.BoxGeometry(5, 2.5, 0.1),
+        new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.95, roughness: 0.05 }));
+    mirror.position.set(0, -2, -VD / 2 + 0.3);
+    villa.add(mirror);
+
+    // Kellertreppe nach oben
+    const stairMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.8 });
+    for (let s = 0; s < 10; s++) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 0.8), stairMat);
+        step.position.set(VW / 2 - 2, -3.7 + s * 0.4, -VD / 2 + 1.5 + s * 0.9);
+        villa.add(step);
+    }
+
+    // ======= EG: WOHNZIMMER + KÜCHE =======
+    // EG Boden
+    const egFloor = new THREE.Mesh(new THREE.BoxGeometry(VW, 0.3, VD), floorMat);
+    egFloor.position.y = 0.15;
+    villa.add(egFloor);
+
+    // EG Wände
+    const egWalls = (baseY) => {
+        const bw = new THREE.Mesh(new THREE.BoxGeometry(VW, FLOOR_H, WALL_T), wallMat);
+        bw.position.set(0, baseY + FLOOR_H / 2, -VD / 2); villa.add(bw);
+        const lw = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, FLOOR_H, VD), wallMat);
+        lw.position.set(-VW / 2, baseY + FLOOR_H / 2, 0); villa.add(lw);
+        const rw = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, FLOOR_H, VD), wallMat);
+        rw.position.set(VW / 2, baseY + FLOOR_H / 2, 0); villa.add(rw);
+        // Vorderwand mit Tür
+        const fwl = new THREE.Mesh(new THREE.BoxGeometry(9, FLOOR_H, WALL_T), wallMat);
+        fwl.position.set(-9.5, baseY + FLOOR_H / 2, VD / 2); villa.add(fwl);
+        const fwr = new THREE.Mesh(new THREE.BoxGeometry(9, FLOOR_H, WALL_T), wallMat);
+        fwr.position.set(9.5, baseY + FLOOR_H / 2, VD / 2); villa.add(fwr);
+        const fwt = new THREE.Mesh(new THREE.BoxGeometry(10, 1, WALL_T), wallMat);
+        fwt.position.set(0, baseY + FLOOR_H - 0.5, VD / 2); villa.add(fwt);
+    };
+    egWalls(0);
+
+    // Trennwand Wohnzimmer / Küche
+    const divider = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, FLOOR_H, VD * 0.4), wallMat);
+    divider.position.set(0, FLOOR_H / 2, -VD / 2 + VD * 0.4 / 2);
+    villa.add(divider);
+
+    // ------ WOHNZIMMER (linke Seite) ------
+    // Sofa
+    const sofa = createSofa();
+    sofa.position.set(-8, 0.3, 2);
+    villa.add(sofa);
+
+    // Couchtisch
+    const coffeeTable = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.5, 1.5),
+        new THREE.MeshStandardMaterial({ color: 0x2f1b0e, roughness: 0.4, metalness: 0.1 }));
+    coffeeTable.position.set(-8, 0.55, 5);
+    villa.add(coffeeTable);
+
+    // TV an der Wand
+    const tvScreen = new THREE.Mesh(new THREE.BoxGeometry(4, 2.5, 0.15),
+        new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 }));
+    tvScreen.position.set(-8, 3, -VD / 2 + 0.5);
+    villa.add(tvScreen);
+    const tvGlow = new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.1, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0x4488ff, emissive: 0x112244, emissiveIntensity: 0.3 }));
+    tvGlow.position.set(-8, 3, -VD / 2 + 0.35);
+    villa.add(tvGlow);
+
+    // Bilder an der Wand
+    const picColors = [0x2e86ab, 0xa23b72, 0xf18f01, 0xc73e1d];
+    for (let i = 0; i < 3; i++) {
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.4, 0.1), darkWoodMat);
+        frame.position.set(-VW / 2 + 0.3, 2.8, -4 + i * 4);
+        frame.rotation.y = Math.PI / 2;
+        villa.add(frame);
+        const canvas = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1, 0.05),
+            new THREE.MeshStandardMaterial({ color: picColors[i] }));
+        canvas.position.set(-VW / 2 + 0.15, 2.8, -4 + i * 4);
+        canvas.rotation.y = Math.PI / 2;
+        villa.add(canvas);
+    }
+
+    // Stehlampe Wohnzimmer
+    const standLamp = createStandLamp();
+    standLamp.position.set(-12, 0.3, -2);
+    villa.add(standLamp);
+
+    // Teppich
+    const livingRug = new THREE.Mesh(new THREE.BoxGeometry(8, 0.04, 6),
+        new THREE.MeshStandardMaterial({ color: 0x704214, roughness: 0.95 }));
+    livingRug.position.set(-8, 0.35, 3);
+    villa.add(livingRug);
+
+    // ------ KÜCHE (rechte Seite) ------
+    // Küchenzeile
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(10, 1.2, 1.5),
+        new THREE.MeshStandardMaterial({ color: 0xdcdcdc, roughness: 0.3 }));
+    counter.position.set(8, 0.9, -VD / 2 + 1.2);
+    villa.add(counter);
+
+    // Oberschränke
+    const upperCab = new THREE.Mesh(new THREE.BoxGeometry(10, 1.2, 0.8), woodMat);
+    upperCab.position.set(8, 3.2, -VD / 2 + 0.6);
+    villa.add(upperCab);
+
+    // Herd
+    const stove = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 1.5),
+        new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.2 }));
+    stove.position.set(6, 1.55, -VD / 2 + 1.2);
+    villa.add(stove);
+    // Heizplatten
+    [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]].forEach(([x, z]) => {
+        const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.05, 12),
+            new THREE.MeshStandardMaterial({ color: 0x333333 }));
+        plate.position.set(6 + x, 1.6, -VD / 2 + 1.2 + z);
+        villa.add(plate);
+    });
+
+    // Kühlschrank
+    const fridge = new THREE.Mesh(new THREE.BoxGeometry(1.5, 3, 1.2),
+        new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.3, metalness: 0.2 }));
+    fridge.position.set(12, 1.8, -VD / 2 + 1);
+    villa.add(fridge);
+    const fridgeHandle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.8, 0.1),
+        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8 }));
+    fridgeHandle.position.set(12.8, 2, -VD / 2 + 1.7);
+    villa.add(fridgeHandle);
+
+    // Esstisch
+    const diningTable = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 2.5), woodMat);
+    diningTable.position.set(8, 1.1, 3);
+    villa.add(diningTable);
+    const dTableLegs = new THREE.MeshStandardMaterial({ color: 0x3b2110 });
+    [[-1.6, -0.9], [1.6, -0.9], [-1.6, 0.9], [1.6, 0.9]].forEach(([x, z]) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.1, 6), dTableLegs);
+        leg.position.set(8 + x, 0.55, 3 + z);
+        villa.add(leg);
+    });
+    // Stühle am Esstisch
+    for (let i = 0; i < 4; i++) {
+        const ch = createChair();
+        const side = i < 2 ? -1 : 1;
+        ch.position.set(8 + (i % 2 === 0 ? -1.2 : 1.2), 0.3, 3 + side * 1.8);
+        ch.rotation.y = side > 0 ? Math.PI : 0;
+        villa.add(ch);
+    }
+
+    // EG Licht (warm)
+    const egLight = new THREE.PointLight(0xffe4b5, 1, 25);
+    egLight.position.set(0, 3.5, 0);
+    villa.add(egLight);
+    const egLight2 = new THREE.PointLight(0xffe4b5, 0.6, 15);
+    egLight2.position.set(-8, 3.5, 3);
+    villa.add(egLight2);
+
+    // EG Treppe nach oben
+    for (let s = 0; s < 10; s++) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.2, 0.8), stairMat);
+        step.position.set(VW / 2 - 2, 0.3 + s * 0.4, -VD / 2 + 1.5 + s * 0.9);
+        villa.add(step);
+    }
+
+    // ======= 1. OG =======
+    const og1Y = FLOOR_H;
+    const og1Floor = new THREE.Mesh(new THREE.BoxGeometry(VW, 0.3, VD), floorMat);
+    og1Floor.position.y = og1Y + 0.15;
+    villa.add(og1Floor);
+
+    // OG1 Wände
+    ['back', 'left', 'right', 'front'].forEach(side => {
+        let w;
+        if (side === 'back') {
+            w = new THREE.Mesh(new THREE.BoxGeometry(VW, FLOOR_H, WALL_T), wallMat);
+            w.position.set(0, og1Y + FLOOR_H / 2, -VD / 2);
+        } else if (side === 'left') {
+            w = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, FLOOR_H, VD), wallMat);
+            w.position.set(-VW / 2, og1Y + FLOOR_H / 2, 0);
+        } else if (side === 'right') {
+            w = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, FLOOR_H, VD), wallMat);
+            w.position.set(VW / 2, og1Y + FLOOR_H / 2, 0);
+        } else {
+            w = new THREE.Mesh(new THREE.BoxGeometry(VW, FLOOR_H, WALL_T), wallMat);
+            w.position.set(0, og1Y + FLOOR_H / 2, VD / 2);
+        }
+        villa.add(w);
+    });
+
+    // Fenster OG1
+    const winMat = new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4 });
+    [[-8, -VD / 2], [4, -VD / 2], [-8, VD / 2], [4, VD / 2]].forEach(([x, z]) => {
+        const win = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 0.1), winMat);
+        win.position.set(x, og1Y + 2.2, z + (z > 0 ? 0.3 : -0.3));
+        villa.add(win);
+    });
+
+    // OG1 Licht
+    const og1Light = new THREE.PointLight(0xffe4b5, 0.8, 20);
+    og1Light.position.set(0, og1Y + 3.5, 0);
+    villa.add(og1Light);
+
+    // Schlafzimmer OG1
+    const villaBed = createBed();
+    villaBed.position.set(-8, og1Y + 0.3, -5);
+    villa.add(villaBed);
+
+    // Nachttisch
+    const vns = new THREE.Mesh(new THREE.BoxGeometry(1, 0.8, 1), woodMat);
+    vns.position.set(-4.5, og1Y + 0.7, -6);
+    villa.add(vns);
+
+    // Badezimmer-Bereich (einfach)
+    const bathtub = new THREE.Mesh(new THREE.BoxGeometry(3, 0.8, 1.5),
+        new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.2 }));
+    bathtub.position.set(8, og1Y + 0.7, -7);
+    villa.add(bathtub);
+
+    // Sofa OG1
+    const villaSofa = createSofa();
+    villaSofa.position.set(-4, og1Y + 0.3, 5);
+    villaSofa.rotation.y = Math.PI;
+    villa.add(villaSofa);
+
+    // Bilder OG1
+    for (let i = 0; i < 2; i++) {
+        const fr = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 0.1), darkWoodMat);
+        fr.position.set(-VW / 2 + 0.3, og1Y + 2.5, -3 + i * 8);
+        fr.rotation.y = Math.PI / 2;
+        villa.add(fr);
+        const cv = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.1, 0.05),
+            new THREE.MeshStandardMaterial({ color: [0x3a86a1, 0xd4a017][i] }));
+        cv.position.set(-VW / 2 + 0.15, og1Y + 2.5, -3 + i * 8);
+        cv.rotation.y = Math.PI / 2;
+        villa.add(cv);
+    }
+
+    // Treppe OG1→OG2 (nicht gebaut, es gibt kein OG2 - Villa hat nur Keller+EG+OG1)
+
+    // ======= DACH =======
+    const villaRoof = new THREE.Mesh(
+        new THREE.ConeGeometry(20, 5, 4),
+        roofMat
+    );
+    villaRoof.position.y = og1Y + FLOOR_H + 2.5;
+    villaRoof.rotation.y = Math.PI / 4;
+    villaRoof.castShadow = true;
+    villa.add(villaRoof);
+
+    // Balkon OG1 (vorne)
+    const balcony = new THREE.Mesh(new THREE.BoxGeometry(8, 0.3, 3), woodMat);
+    balcony.position.set(0, og1Y + 0.15, VD / 2 + 1.5);
+    villa.add(balcony);
+    // Balkongeländer
+    const bRailMat = new THREE.MeshStandardMaterial({ color: 0xf5f0e0 });
+    const bRailFront = new THREE.Mesh(new THREE.BoxGeometry(8, 1, 0.12), bRailMat);
+    bRailFront.position.set(0, og1Y + 0.8, VD / 2 + 2.8);
+    villa.add(bRailFront);
+    [-3.9, 3.9].forEach(x => {
+        const bSide = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1, 3), bRailMat);
+        bSide.position.set(x, og1Y + 0.8, VD / 2 + 1.5);
+        villa.add(bSide);
+    });
+
+    // Außen: Veranda
+    const villaVeranda = new THREE.Mesh(new THREE.BoxGeometry(VW + 4, 0.3, 5), woodMat);
+    villaVeranda.position.set(0, 0.15, VD / 2 + 2.5);
+    villa.add(villaVeranda);
+
+    // Stufen
+    for (let i = 0; i < 3; i++) {
+        const step = new THREE.Mesh(new THREE.BoxGeometry(6, 0.3, 1),
+            new THREE.MeshStandardMaterial({ color: 0x808080, roughness: 0.8 }));
+        step.position.set(0, -0.85 + i * 0.35, VD / 2 + 5 + i);
+        villa.add(step);
+    }
+
+    // Außenlampen
+    [-VW / 2 - 1, VW / 2 + 1].forEach(x => {
+        const lamp = new THREE.Group();
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 3, 8),
+            new THREE.MeshStandardMaterial({ color: 0x333333 }));
+        pole.position.y = 1.5;
+        lamp.add(pole);
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0xfff5e6, emissive: 0xffe082, emissiveIntensity: 0.6 }));
+        bulb.position.y = 3.2;
+        lamp.add(bulb);
+        const ll = new THREE.PointLight(0xffe082, 0.5, 10);
+        ll.position.y = 3.2;
+        lamp.add(ll);
+        lamp.position.set(x, 0, VD / 2 + 3);
+        villa.add(lamp);
+    });
+
+    // Position der Villa auf der Insel
+    villa.position.set(ISLAND_CENTER_X + 30, 2, 25);
+    scene.add(villa);
+}
+
+function createSofa() {
+    const sofa = new THREE.Group();
+    const sofaMat = new THREE.MeshStandardMaterial({ color: 0x4a6741, roughness: 0.85 });
+    // Sitzfläche
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(5, 0.6, 2), sofaMat);
+    seat.position.y = 0.5;
+    sofa.add(seat);
+    // Rückenlehne
+    const back = new THREE.Mesh(new THREE.BoxGeometry(5, 1.2, 0.5), sofaMat);
+    back.position.set(0, 1.1, -0.75);
+    sofa.add(back);
+    // Armlehnen
+    [-2.3, 2.3].forEach(x => {
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.8, 2), sofaMat);
+        arm.position.set(x, 0.7, 0);
+        sofa.add(arm);
+    });
+    // Kissen
+    const cushionMat = new THREE.MeshStandardMaterial({ color: 0xdaa520, roughness: 0.9 });
+    [-1.5, 0, 1.5].forEach(x => {
+        const cushion = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.4), cushionMat);
+        cushion.position.set(x, 1.3, -0.5);
+        sofa.add(cushion);
+    });
+    return sofa;
+}
+
+function createStandLamp() {
+    const lamp = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 2.5, 8),
+        new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7 }));
+    pole.position.y = 1.25;
+    lamp.add(pole);
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.6, 12, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0xf5deb3, side: THREE.DoubleSide }));
+    shade.position.y = 2.7;
+    lamp.add(shade);
+    const bulb = new THREE.PointLight(0xffe4b5, 0.7, 10);
+    bulb.position.y = 2.5;
+    lamp.add(bulb);
+    return lamp;
 }
 
 function createAlienPrison(index) {
@@ -2589,57 +4155,49 @@ function createSmallAlien() {
 function createVehicles() {
     vehicles = [];
     
-    // Autos auf Hauptstraßen (Nord-Süd) - reduziert
-    [-100, 0, 100].forEach(x => {
-        for (let i = 0; i < 2; i++) {
+    // Autos auf Hauptstraßen (Nord-Süd)
+    CITY_ROADS.forEach(x => {
+        for (let i = 0; i < 3; i++) {
             const car = createCar();
-            const startZ = (Math.random() - 0.5) * 350;
-            const lane = Math.random() < 0.5 ? -3 : 3;
-            car.position.set(x + lane, 0.5, startZ);
-            car.rotation.y = lane > 0 ? 0 : Math.PI;
+            const startZ = (Math.random() - 0.5) * ROAD_LIMIT * 2;
+            const laneOffset = ROAD_LANES[Math.floor(Math.random() * ROAD_LANES.length)];
+            car.position.set(x + laneOffset, 0.5, startZ);
+            car.rotation.y = laneOffset > 0 ? 0 : Math.PI;
             car.userData = {
                 type: 'driving',
                 axis: 'z',
-                direction: lane > 0 ? 1 : -1,
-                speed: 0.15 + Math.random() * 0.1,
-                lane: x + lane
+                direction: laneOffset > 0 ? 1 : -1,
+                speed: 0.12 + Math.random() * 0.12,
+                roadCoord: x,
+                laneOffset,
+                turnCooldown: 0
             };
             vehicles.push(car);
             scene.add(car);
         }
     });
     
-    // Autos auf Hauptstraßen (Ost-West) - reduziert
-    [-100, 0, 100].forEach(z => {
-        for (let i = 0; i < 2; i++) {
+    // Autos auf Hauptstraßen (Ost-West)
+    CITY_ROADS.forEach(z => {
+        for (let i = 0; i < 3; i++) {
             const car = createCar();
-            const startX = (Math.random() - 0.5) * 350;
-            const lane = Math.random() < 0.5 ? -3 : 3;
-            car.position.set(startX, 0.5, z + lane);
-            car.rotation.y = lane > 0 ? Math.PI / 2 : -Math.PI / 2;
+            const startX = (Math.random() - 0.5) * ROAD_LIMIT * 2;
+            const laneOffset = ROAD_LANES[Math.floor(Math.random() * ROAD_LANES.length)];
+            car.position.set(startX, 0.5, z + laneOffset);
+            car.rotation.y = laneOffset > 0 ? Math.PI / 2 : -Math.PI / 2;
             car.userData = {
                 type: 'driving',
                 axis: 'x',
-                direction: lane > 0 ? 1 : -1,
-                speed: 0.15 + Math.random() * 0.1,
-                lane: z + lane
+                direction: laneOffset > 0 ? 1 : -1,
+                speed: 0.12 + Math.random() * 0.12,
+                roadCoord: z,
+                laneOffset,
+                turnCooldown: 0
             };
             vehicles.push(car);
             scene.add(car);
         }
     });
-    
-    // Einige geparkte Autos - reduziert
-    for (let i = 0; i < 8; i++) {
-        const car = createCar();
-        const x = -180 + Math.random() * 360;
-        const z = -180 + Math.random() * 360;
-        car.position.set(x, 0.5, z);
-        car.rotation.y = Math.random() * Math.PI * 2;
-        car.userData = { type: 'parked' };
-        vehicles.push(car);
-        scene.add(car);
-    }
 }
 
 function createCar() {
@@ -2932,70 +4490,80 @@ function createAliens() {
     
     for (let i = 0; i < TOTAL_ALIENS; i++) {
         const alien = createAlien();
-        alien.position.set((Math.random() - 0.5) * 350, 3, (Math.random() - 0.5) * 350);
-        alien.userData = { collected: false, bobOffset: Math.random() * Math.PI * 2 };
+        const spawnOnRoad = Math.random() < 0.7;
+        if (spawnOnRoad) {
+            const axis = Math.random() < 0.5 ? 'x' : 'z';
+            const road = CITY_ROADS[Math.floor(Math.random() * CITY_ROADS.length)];
+            const offset = (Math.random() - 0.5) * 6;
+            if (axis === 'x') {
+                alien.position.set((Math.random() - 0.5) * (ROAD_LIMIT * 1.6), 0.1, road + offset);
+            } else {
+                alien.position.set(road + offset, 0.1, (Math.random() - 0.5) * (ROAD_LIMIT * 1.6));
+            }
+        } else {
+            alien.position.set((Math.random() - 0.5) * (CITY_BOUND * 2 - 20), 0.1, (Math.random() - 0.5) * (CITY_BOUND * 2 - 20));
+        }
+        alien.userData = {
+            collected: false,
+            bobOffset: Math.random() * Math.PI * 2,
+            moveTarget: null,
+            walkTimer: Math.random() * 4
+        };
         aliens.push(alien);
         scene.add(alien);
     }
 }
 
 function createAlien() {
-    const alien = new THREE.Group();
+    const kid = new THREE.Group();
 
-    const bodyMaterial = new THREE.MeshStandardMaterial({
-        color: 0x00FF00,
-        emissive: 0x00FF00,
-        emissiveIntensity: 0.3,
-        roughness: 0.2,
-        metalness: 0.3
-    });
+    const outfitTypes = [
+        { shirt: 0x42a5f5, pants: 0x1e3a5f },
+        { shirt: 0xef5350, pants: 0x263238 },
+        { shirt: 0x66bb6a, pants: 0x455a64 },
+        { shirt: 0xffca28, pants: 0x5d4037 },
+        { shirt: 0xab47bc, pants: 0x37474f }
+    ];
+    const skinTones = [0xFFE0BD, 0xE8BEAC, 0xD4A574, 0xC68642, 0x8D5524];
 
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 32), bodyMaterial);
+    const outfit = outfitTypes[Math.floor(Math.random() * outfitTypes.length)];
+    const skinColor = skinTones[Math.floor(Math.random() * skinTones.length)];
+
+    const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.6 });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: outfit.shirt, roughness: 0.7 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: outfit.pants, roughness: 0.75 });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.3), shirtMat);
+    body.position.y = 0.75;
     body.castShadow = true;
-    alien.add(body);
+    kid.add(body);
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.7, 32, 32), bodyMaterial);
-    head.position.y = 1.2;
-    head.scale.set(1, 1.2, 1);
-    head.castShadow = true;
-    alien.add(head);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 16), skinMat);
+    head.position.y = 1.4;
+    kid.add(head);
 
-    const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.1, metalness: 0.9 });
-    
+    [-0.18, 0.18].forEach(x => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.5, 10), pantsMat);
+        leg.position.set(x, 0.25, 0);
+        leg.castShadow = true;
+        kid.add(leg);
+    });
+
     [-0.3, 0.3].forEach(x => {
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), eyeMaterial);
-        eye.position.set(x, 1.3, 0.5);
-        eye.scale.set(1, 1.5, 0.5);
-        alien.add(eye);
+        const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.5, 10), shirtMat);
+        arm.position.set(x, 0.9, 0);
+        arm.rotation.z = x > 0 ? -0.4 : 0.4;
+        kid.add(arm);
     });
 
-    const antennaMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x00FF00, emissive: 0x00FF00, emissiveIntensity: 0.2 
-    });
-    
-    [-0.25, 0.25].forEach(x => {
-        const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.6, 8), antennaMaterial);
-        antenna.position.set(x, 2, 0);
-        antenna.rotation.z = x > 0 ? -0.3 : 0.3;
-        alien.add(antenna);
-
-        const tip = new THREE.Mesh(
-            new THREE.SphereGeometry(0.1, 8, 8),
-            new THREE.MeshStandardMaterial({ color: 0xFFFF00, emissive: 0xFFFF00, emissiveIntensity: 1 })
-        );
-        tip.position.set(x > 0 ? x + 0.15 : x - 0.15, 2.3, 0);
-        alien.add(tip);
-    });
-
-    // Glow
-    const glow = new THREE.Mesh(
-        new THREE.SphereGeometry(1.5, 16, 16),
-        new THREE.MeshBasicMaterial({ color: 0x00FF00, transparent: true, opacity: 0.1 })
+    const hair = new THREE.Mesh(
+        new THREE.SphereGeometry(0.3, 14, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.8 })
     );
-    glow.position.y = 0.6;
-    alien.add(glow);
+    hair.position.y = 1.55;
+    kid.add(hair);
 
-    return alien;
+    return kid;
 }
 
 // ==========================================
@@ -3320,14 +4888,14 @@ function createPoliceman() {
 function createNPCs() {
     npcs = [];
     
-    const npcCount = 20; // Reduziert für bessere Performance
+    const npcCount = 36; // Etwas dichter fuer eine lebendige Stadt
     
     // Spawn-Positionen entlang der Straßen
     const streetPositions = [];
-    [-100, 0, 100].forEach(mainCoord => {
-        for (let i = -180; i <= 180; i += 40) {
-            streetPositions.push({ x: mainCoord + (Math.random() - 0.5) * 8, z: i });
-            streetPositions.push({ x: i, z: mainCoord + (Math.random() - 0.5) * 8 });
+    CITY_ROADS.forEach(mainCoord => {
+        for (let i = -CITY_BOUND; i <= CITY_BOUND; i += 30) {
+            streetPositions.push({ x: mainCoord + (Math.random() - 0.5) * 6, z: i + (Math.random() - 0.5) * 4 });
+            streetPositions.push({ x: i + (Math.random() - 0.5) * 4, z: mainCoord + (Math.random() - 0.5) * 6 });
         }
     });
     
@@ -3691,30 +5259,30 @@ function createCivilian() {
 function createAnimals() {
     animals = [];
     
-    // Hunde (reduziert)
-    for (let i = 0; i < 5; i++) {
+    // Hunde
+    for (let i = 0; i < 10; i++) {
         const dog = createDog();
-        dog.position.set((Math.random() - 0.5) * 300, 0.1, (Math.random() - 0.5) * 300);
+        dog.position.set((Math.random() - 0.5) * 360, 0.1, (Math.random() - 0.5) * 360);
         dog.userData = { type: 'dog', speed: 0.05 + Math.random() * 0.03, target: null, state: 'idle' };
         animals.push(dog);
         scene.add(dog);
     }
     
-    // Katzen (reduziert)
-    for (let i = 0; i < 5; i++) {
+    // Katzen
+    for (let i = 0; i < 10; i++) {
         const cat = createCat();
-        cat.position.set((Math.random() - 0.5) * 300, 0.1, (Math.random() - 0.5) * 300);
+        cat.position.set((Math.random() - 0.5) * 360, 0.1, (Math.random() - 0.5) * 360);
         cat.userData = { type: 'cat', speed: 0.04 + Math.random() * 0.02, target: null, state: 'idle' };
         animals.push(cat);
         scene.add(cat);
     }
     
-    // Vögel am Himmel (reduziert)
-    for (let i = 0; i < 25; i++) {
+    // Vögel am Himmel
+    for (let i = 0; i < 40; i++) {
         const bird = createBird();
         // Vögel in Gruppen/Schwärmen
-        const swarmX = (Math.random() - 0.5) * 500;
-        const swarmZ = (Math.random() - 0.5) * 500;
+        const swarmX = (Math.random() - 0.5) * 700;
+        const swarmZ = (Math.random() - 0.5) * 700;
         bird.position.set(
             swarmX + (Math.random() - 0.5) * 30,
             20 + Math.random() * 50,
@@ -4104,6 +5672,28 @@ function onKeyDown(event) {
             keys.interact = true; 
             handleInteraction(); 
             break;
+        case 'KeyF':
+            // Truhe öffnen/schließen
+            if (chestOpen) {
+                closeChest();
+            } else if (insideHouse && gameState === 'playing') {
+                const chestWorldX = ISLAND_CENTER_X + 7;
+                const chestWorldZ = -15 + 4;
+                const cdx = camera.position.x - chestWorldX;
+                const cdz = camera.position.z - chestWorldZ;
+                if (Math.sqrt(cdx * cdx + cdz * cdz) < 4) {
+                    openChestUI();
+                }
+            }
+            break;
+        case 'Escape':
+            event.preventDefault();
+            if (gameState === 'playing') {
+                pauseGame();
+            } else if (gameState === 'paused') {
+                resumeGame();
+            }
+            break;
     }
 }
 
@@ -4189,16 +5779,16 @@ function restartGame() {
 
 function resetGame() {
     // Zurück zur Insel spawnen
-    player.position.set(280, 6, 10);
+    player.position.set(ISLAND_CENTER_X, 6, 10);
     playerOnBoat = false;
     boatMoving = false;
-    boat.position.set(240, 1, 0); // Boot bei der Insel
+    boat.position.set(BOAT_ISLAND_X, 1, 0); // Boot bei der Insel
     boatDirection = 'toMainland';
     
     // First-Person Kamera zurücksetzen
     yaw = 0;
     pitch = 0;
-    camera.position.set(280, 6, 10); // Auf der Insel (Höhe 6)
+    camera.position.set(ISLAND_CENTER_X, 6, 10); // Auf der Insel (Höhe 6)
     camera.rotation.set(0, 0, 0);
     
     collectedAliens = 0;
@@ -4217,11 +5807,11 @@ function resetGame() {
     aliens.forEach(alien => {
         alien.visible = true;
         alien.userData.collected = false;
-        alien.position.set((Math.random() - 0.5) * 350, 3, (Math.random() - 0.5) * 350);
+        alien.position.set((Math.random() - 0.5) * (CITY_BOUND * 2 - 20), 3, (Math.random() - 0.5) * (CITY_BOUND * 2 - 20));
     });
 
     police.forEach(cop => {
-        cop.position.set((Math.random() - 0.5) * 300, 2, (Math.random() - 0.5) * 300);
+        cop.position.set((Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2, 2, (Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2);
     });
 
     const bag = player.getObjectByName('bag');
@@ -4257,7 +5847,7 @@ function handleInteraction() {
     if (!playerOnBoat && !boatMoving) {
         const distanceToBoat = player.position.distanceTo(boat.position);
         const distanceToDock = player.position.distanceTo(boatDock.position);
-        const nearMainlandBoat = (distanceToBoat < 12 || distanceToDock < 12) && boat.position.x < 225;
+        const nearMainlandBoat = (distanceToBoat < 12 || distanceToDock < 12) && boat.position.x < BOAT_SWITCH_X;
         
         if (nearMainlandBoat) {
             if (collectedAliens > 0) {
@@ -4277,7 +5867,7 @@ function handleInteraction() {
     if (!playerOnBoat && !boatMoving) {
         const distanceToBoat = player.position.distanceTo(boat.position);
         const distanceToIslandDock = player.position.distanceTo(islandDock.position);
-        const nearIslandBoat = (distanceToBoat < 12 || distanceToIslandDock < 12) && boat.position.x >= 225;
+        const nearIslandBoat = (distanceToBoat < 12 || distanceToIslandDock < 12) && boat.position.x >= BOAT_SWITCH_X;
         
         if (nearIslandBoat) {
             playerOnBoat = true;
@@ -4288,11 +5878,11 @@ function handleInteraction() {
         }
     }
 
-    // Prüfe ob Spieler im Haus ist
-    const houseX = 280;
-    const houseZ = -10;
-    const playerInHouseX = camera.position.x > houseX - 9 && camera.position.x < houseX + 9;
-    const playerInHouseZ = camera.position.z > houseZ - 7 && camera.position.z < houseZ + 7;
+    // Prüfe ob Spieler im Haus ist (größeres Haus, 3 Stockwerke)
+    const houseX = ISLAND_CENTER_X;
+    const houseZ = -15;
+    const playerInHouseX = camera.position.x > houseX - 11 && camera.position.x < houseX + 11;
+    const playerInHouseZ = camera.position.z > houseZ - 9 && camera.position.z < houseZ + 12;
     insideHouse = playerInHouseX && playerInHouseZ;
 
     // Aliens in Gefängnisse abliefern (im Haus)
@@ -4336,6 +5926,113 @@ function showMessage(text) {
     setTimeout(() => msgElement.classList.remove('visible'), 2000);
 }
 
+// ==========================================
+// TRUHE / LAGER SYSTEM
+// ==========================================
+function openChestUI() {
+    chestOpen = true;
+    document.exitPointerLock();
+    const popup = document.getElementById('chest-popup');
+    if (popup) popup.classList.remove('hidden');
+    updateChestUI();
+}
+
+function closeChest() {
+    chestOpen = false;
+    const popup = document.getElementById('chest-popup');
+    if (popup) popup.classList.add('hidden');
+    // Re-lock pointer
+    const canvas = renderer.domElement;
+    canvas.requestPointerLock();
+}
+
+function storeItemInChest() {
+    if (collectedAliens > 0) {
+        collectedAliens--;
+        chestItems.push({ type: 'kid', time: Date.now() });
+        updateAlienCounter();
+        updateChestUI();
+        showMessage('Kind in Truhe gelegt! 📦');
+        if (collectedAliens === 0 && bagMesh) bagMesh.visible = false;
+    } else {
+        showMessage('Keine Kinder zum Einlagern!');
+    }
+}
+
+function takeItemFromChest() {
+    if (chestItems.length > 0) {
+        chestItems.pop();
+        collectedAliens++;
+        updateAlienCounter();
+        updateChestUI();
+        showMessage('Kind aus Truhe genommen! 🧒');
+        if (bagMesh) bagMesh.visible = true;
+    } else {
+        showMessage('Truhe ist leer!');
+    }
+}
+
+function updateChestUI() {
+    const container = document.getElementById('chest-items');
+    if (!container) return;
+    if (chestItems.length === 0) {
+        container.innerHTML = '<p style="grid-column:1/-1;text-align:center;color:#888;">Truhe ist leer</p>';
+    } else {
+        container.innerHTML = chestItems.map((item, i) => 
+            `<div style="background:#3a3a3a;border-radius:8px;padding:8px;text-align:center;">🧒 Kind ${i + 1}</div>`
+        ).join('');
+    }
+}
+
+window.closeChest = closeChest;
+window.storeItemInChest = storeItemInChest;
+window.takeItemFromChest = takeItemFromChest;
+
+function pauseGame() {
+    if (gameState !== 'playing') return;
+    gameState = 'paused';
+    document.exitPointerLock();
+    if (audioManager) {
+        audioManager.stopMusic();
+    }
+    const pausePopup = document.getElementById('pause-popup');
+    if (pausePopup) pausePopup.classList.remove('hidden');
+}
+
+function resumeGame() {
+    if (gameState !== 'paused') return;
+    gameState = 'playing';
+    const pausePopup = document.getElementById('pause-popup');
+    if (pausePopup) pausePopup.classList.add('hidden');
+    ensureAudioReady();
+    if (audioManager) {
+        audioManager.startMusic();
+    }
+    const canvas = document.getElementById('game-canvas');
+    if (canvas) canvas.requestPointerLock();
+}
+
+function backToMenuFromPause() {
+    gameState = 'start';
+    document.exitPointerLock();
+    if (audioManager) {
+        audioManager.stopMusic();
+    }
+    const pausePopup = document.getElementById('pause-popup');
+    if (pausePopup) pausePopup.classList.add('hidden');
+    const settingsPopup = document.getElementById('settings-popup');
+    if (settingsPopup) settingsPopup.classList.add('hidden');
+
+    if (typeof backToMenu === 'function') {
+        backToMenu();
+    } else {
+        const mainMenu = document.getElementById('main-menu');
+        if (mainMenu) mainMenu.classList.remove('hidden');
+        const hud = document.getElementById('hud');
+        if (hud) hud.classList.add('hidden');
+    }
+}
+
 function updateAlienCounter() {
     document.getElementById('alien-count').textContent = 
         `${collectedAliens} (${deliveredAliens}/${TOTAL_ALIENS} abgeliefert)`;
@@ -4373,12 +6070,26 @@ function gameWon() {
     document.getElementById('hud').classList.add('hidden');
 }
 
+function updateViewDistance(distance) {
+    if (!camera || !scene || !scene.fog) return;
+    const clamped = Math.max(250, Math.min(1400, distance || 700));
+    camera.far = clamped;
+    camera.updateProjectionMatrix();
+    scene.fog.density = 1 / (clamped * 0.65);
+}
+
 // Einstellungen vom Menü
 function applyGameSettings(settings) {
     if (!settings) return;
     ensureAudioReady();
     if (audioManager) {
         audioManager.setVolumes(settings);
+    }
+    if (settings.viewDistance) {
+        updateViewDistance(settings.viewDistance);
+    }
+    if (typeof settings.shadows === 'boolean' && renderer) {
+        renderer.shadowMap.enabled = settings.shadows;
     }
 }
 
@@ -4389,6 +6100,9 @@ window.ensureAudioReady = ensureAudioReady;
 // ==========================================
 function updatePlayer(deltaTime) {
     if (gameState !== 'playing' || playerOnBoat) return;
+
+    const groundHeight = isOnIsland() ? getIslandGroundHeight(player.position.x, player.position.y, player.position.z) : getTerrainHeightAt(player.position.x, player.position.z);
+    const groundY = groundHeight + GROUND_LEVEL;
 
     // Sprint-Ausdauer verwalten
     updateStamina();
@@ -4445,11 +6159,13 @@ function updatePlayer(deltaTime) {
         player.position.y += jumpVelocity;
         jumpVelocity -= GRAVITY;
         
-        if (player.position.y <= GROUND_LEVEL) {
-            player.position.y = GROUND_LEVEL;
+        if (player.position.y <= groundY) {
+            player.position.y = groundY;
             isJumping = false;
             jumpVelocity = 0;
         }
+    } else {
+        player.position.y = groundY;
     }
 
     // Kopfwackeln beim Laufen (nur am Boden)
@@ -4462,17 +6178,17 @@ function updatePlayer(deltaTime) {
 
     // Grenzen - Festland
     if (!isOnIsland()) {
-        player.position.x = Math.max(-195, Math.min(195, player.position.x));
-        player.position.z = Math.max(-195, Math.min(195, player.position.z));
+        player.position.x = Math.max(-MAINLAND_BOUND, Math.min(MAINLAND_BOUND, player.position.x));
+        player.position.z = Math.max(-MAINLAND_BOUND, Math.min(MAINLAND_BOUND, player.position.z));
     } else {
         // Grenzen - Insel
         const distFromIslandCenter = Math.sqrt(
-            Math.pow(player.position.x - 280, 2) + Math.pow(player.position.z, 2)
+            Math.pow(player.position.x - ISLAND_CENTER_X, 2) + Math.pow(player.position.z - ISLAND_CENTER_Z, 2)
         );
-        if (distFromIslandCenter > 38) {
-            const angle = Math.atan2(player.position.z, player.position.x - 280);
-            player.position.x = 280 + Math.cos(angle) * 38;
-            player.position.z = Math.sin(angle) * 38;
+        if (distFromIslandCenter > ISLAND_RADIUS - 2) {
+            const angle = Math.atan2(player.position.z - ISLAND_CENTER_Z, player.position.x - ISLAND_CENTER_X);
+            player.position.x = ISLAND_CENTER_X + Math.cos(angle) * (ISLAND_RADIUS - 2);
+            player.position.z = ISLAND_CENTER_Z + Math.sin(angle) * (ISLAND_RADIUS - 2);
         }
     }
 
@@ -4554,11 +6270,11 @@ function updateInteractionHints() {
         const distToIslandDock = player.position.distanceTo(islandDock.position);
         
         // Boot am Festland
-        if ((distToBoat < 15 || distToDock < 15) && boat.position.x < 225) {
+        if ((distToBoat < 15 || distToDock < 15) && boat.position.x < BOAT_SWITCH_X) {
             hint = collectedAliens > 0 ? '[E] Boot zur Insel nehmen' : '[E] Boot (sammle erst Kinder!)';
         } 
         // Boot an der Insel
-        else if ((distToBoat < 15 || distToIslandDock < 15) && boat.position.x >= 225) {
+        else if ((distToBoat < 15 || distToIslandDock < 15) && boat.position.x >= BOAT_SWITCH_X) {
             hint = '[E] Boot zum Festland nehmen';
         }
     }
@@ -4568,6 +6284,17 @@ function updateInteractionHints() {
         const distToHouse = player.position.distanceTo(house.position);
         if (distToHouse < 15) {
             hint = '[E] Kinder im Haus abliefern';
+        }
+    }
+
+    // Truhe in der Nähe? (im Haus)
+    if (!hint && insideHouse && storageChest) {
+        const chestWorldX = ISLAND_CENTER_X + 7;
+        const chestWorldZ = -15 + 4;
+        const dx = camera.position.x - chestWorldX;
+        const dz = camera.position.z - chestWorldZ;
+        if (Math.sqrt(dx * dx + dz * dz) < 4) {
+            hint = '[F] Truhe öffnen';
         }
     }
     
@@ -4584,12 +6311,78 @@ function updatePlayerBody() {
     
     // Beine folgen dem Spieler
     playerBody.position.copy(player.position);
-    playerBody.position.y = 0;
+    playerBody.position.y = player.position.y - GROUND_LEVEL;
     playerBody.rotation.y = yaw;
 }
 
 function isOnIsland() {
-    return player.position.x > 220;
+    return player.position.x > ISLAND_THRESHOLD_X;
+}
+
+function getIslandGroundHeight(px, py, pz) {
+    // Base island surface
+    let ground = 2;
+    
+    // Check if player is inside main house (3 floors)
+    const houseX = ISLAND_CENTER_X;
+    const houseZ = -15;
+    const inHouseX = px > houseX - 11 && px < houseX + 11;
+    const inHouseZ = pz > houseZ - 9 && pz < houseZ + 12;
+    
+    if (inHouseX && inHouseZ) {
+        // Floor heights: EG=3.15, 1.OG=7.15, 2.OG=11.15
+        const floors = [3.15, 7.15, 11.15];
+        // Find the highest floor the player is standing on or above
+        for (let i = floors.length - 1; i >= 0; i--) {
+            if (py >= floors[i] - 0.5) {
+                ground = floors[i];
+                break;
+            }
+        }
+        // On stairs (right side, back area) - smooth ramp
+        const stairX = houseX + 9; // right side near wall
+        if (px > stairX - 3 && px < stairX + 1) {
+            const stairProgress = (pz - (houseZ - 9)) / 18; // 0-1 along depth
+            const clampedProgress = Math.max(0, Math.min(1, stairProgress));
+            // Check which floor transition
+            if (py < 7.15 && py >= 3.0) {
+                ground = 3.15 + clampedProgress * 4;
+            } else if (py < 11.15 && py >= 7.0) {
+                ground = 7.15 + clampedProgress * 4;
+            }
+        }
+    }
+    
+    // Check if in villa (Keller+EG+OG1)
+    const villaX = ISLAND_CENTER_X + 30;
+    const villaZ = 25;
+    const VW = 28, VD = 22;
+    const inVillaX = px > villaX - VW / 2 && px < villaX + VW / 2;
+    const inVillaZ = pz > villaZ - VD / 2 && pz < villaZ + VD / 2 + 3;
+    
+    if (inVillaX && inVillaZ) {
+        // Villa floors: Keller=-1.7, EG=2.3, OG1=6.3
+        const vFloors = [-1.7, 2.3, 6.3];
+        for (let i = vFloors.length - 1; i >= 0; i--) {
+            if (py >= vFloors[i] - 0.5) {
+                ground = vFloors[i];
+                break;
+            }
+        }
+        // Villa stairs
+        const vStairX = villaX + VW / 2 - 2;
+        if (px > vStairX - 3 && px < vStairX + 1) {
+            const stairProgress = (pz - (villaZ - VD / 2)) / VD;
+            const cp = Math.max(0, Math.min(1, stairProgress));
+            if (py < 2.3 && py >= -1.8) {
+                ground = -1.7 + cp * 4;
+            } else if (py < 6.3 && py >= 2.0) {
+                ground = 2.3 + cp * 4;
+            }
+        }
+    }
+    
+    return ground;
 }
 
 // Gebäude-Kollision prüfen
@@ -4617,24 +6410,25 @@ function updateBoat() {
     
     if (boatDirection === 'toIsland') {
         boat.position.x += boatSpeed;
-        if (boat.position.x >= 240) {
-            boat.position.x = 240;
+        if (boat.position.x >= BOAT_ISLAND_X) {
+            boat.position.x = BOAT_ISLAND_X;
             boatMoving = false;
             playerOnBoat = false;
             // Spieler auf Insel-Dock absetzen
-            player.position.set(240, 6, 5);
-            camera.position.set(240, 6, 5);
+            player.position.set(BOAT_ISLAND_X, 6, 5);
+            camera.position.set(BOAT_ISLAND_X, 6, 5);
             showMessage('Willkommen auf der Insel! Geh ins Haus! 🏝️');
         }
     } else {
         boat.position.x -= boatSpeed;
-        if (boat.position.x <= 205) {
-            boat.position.x = 205;
+        if (boat.position.x <= BOAT_MAINLAND_X) {
+            boat.position.x = BOAT_MAINLAND_X;
             boatMoving = false;
             playerOnBoat = false;
             // Spieler auf Festland-Dock absetzen
-            player.position.set(195, 3.5, 0);
-            camera.position.set(195, 3.5, 0);
+            const groundHeight = getTerrainHeightAt(BOAT_MAINLAND_X, 0);
+            player.position.set(BOAT_MAINLAND_X, groundHeight + GROUND_LEVEL, 0);
+            camera.position.set(BOAT_MAINLAND_X, groundHeight + GROUND_LEVEL, 0);
             showMessage('In der Stadt! Sammle Kinder! 🌆');
         }
     }
@@ -4662,7 +6456,7 @@ function updateBoat() {
 function updatePolice() {
     if (gameState !== 'playing') return;
 
-    const playerOnMainland = player.position.x < 200;
+    const playerOnMainland = !isOnIsland();
 
     police.forEach(cop => {
         if (playerOnMainland && collectedAliens > 0) {
@@ -4685,7 +6479,7 @@ function updatePolice() {
             
             if (direction.length() < 2) {
                 cop.userData.patrolTarget = new THREE.Vector3(
-                    (Math.random() - 0.5) * 300, 2, (Math.random() - 0.5) * 300
+                    (Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2, 2, (Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2
                 );
             } else {
                 direction.normalize();
@@ -4695,8 +6489,9 @@ function updatePolice() {
             }
         }
 
-        cop.position.x = Math.max(-195, Math.min(195, cop.position.x));
-        cop.position.z = Math.max(-195, Math.min(195, cop.position.z));
+        cop.position.x = Math.max(-MAINLAND_BOUND, Math.min(MAINLAND_BOUND, cop.position.x));
+        cop.position.z = Math.max(-MAINLAND_BOUND, Math.min(MAINLAND_BOUND, cop.position.z));
+        cop.position.y = getTerrainHeightAt(cop.position.x, cop.position.z) + 0.1;
     });
 
     const hudElement = document.getElementById('hud');
@@ -4719,37 +6514,37 @@ function updateAliens() {
     const time = Date.now() * 0.002;
     aliens.forEach(alien => {
         if (alien.visible && !alien.userData.collected) {
-            // Schwebende Bewegung
-            alien.position.y = 3 + Math.sin(time + alien.userData.bobOffset) * 0.4;
-            alien.rotation.y += 0.015;
-            
-            // Aliens bewegen sich langsam herum
-            if (!alien.userData.moveTarget || Math.random() < 0.003) {
+            // Kinder laufen leicht herum
+            const groundHeight = getTerrainHeightAt(alien.position.x, alien.position.z);
+            alien.position.y = groundHeight + 0.1 + Math.sin(time + alien.userData.bobOffset) * 0.03;
+
+            if (!alien.userData.moveTarget || Math.random() < 0.006) {
                 alien.userData.moveTarget = new THREE.Vector3(
-                    (Math.random() - 0.5) * 350,
+                    (Math.random() - 0.5) * (CITY_BOUND * 2 - 20),
                     alien.position.y,
-                    (Math.random() - 0.5) * 350
+                    (Math.random() - 0.5) * (CITY_BOUND * 2 - 20)
                 );
             }
-            
+
             const target = alien.userData.moveTarget;
             const direction = new THREE.Vector3(
                 target.x - alien.position.x,
                 0,
                 target.z - alien.position.z
             );
-            
+
             const distance = direction.length();
-            if (distance > 3) {
+            if (distance > 1.5) {
                 direction.normalize();
-                const alienSpeed = 0.02;
-                alien.position.x += direction.x * alienSpeed;
-                alien.position.z += direction.z * alienSpeed;
+                const kidSpeed = 0.03;
+                alien.position.x += direction.x * kidSpeed;
+                alien.position.z += direction.z * kidSpeed;
+                alien.rotation.y = Math.atan2(direction.x, direction.z);
             }
-            
+
             // Im Bereich bleiben
-            alien.position.x = Math.max(-180, Math.min(180, alien.position.x));
-            alien.position.z = Math.max(-180, Math.min(180, alien.position.z));
+            alien.position.x = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, alien.position.x));
+            alien.position.z = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, alien.position.z));
         }
     });
 }
@@ -4777,6 +6572,9 @@ function updateCamera() {
         camera.position.x = boat.position.x;
         camera.position.y = boat.position.y + 3;
         camera.position.z = boat.position.z;
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = yaw;
+        camera.rotation.x = pitch;
     }
 }
 
@@ -4796,6 +6594,8 @@ function animate() {
         updateNPCs();
         updateAnimals();
         updateVehicles();
+        updateSeaLife();
+        updateSeaBoats();
         updateWater();
     }
 
@@ -4809,20 +6609,62 @@ function animate() {
 function updateVehicles() {
     vehicles.forEach(car => {
         if (car.userData.type !== 'driving') return;
-        
+
         const speed = car.userData.speed;
         const direction = car.userData.direction;
-        
+        const laneOffset = car.userData.laneOffset;
+
+        if (car.userData.turnCooldown > 0) {
+            car.userData.turnCooldown -= 1;
+        }
+
         if (car.userData.axis === 'z') {
             car.position.z += speed * direction;
-            // Wenn Auto aus dem Bereich fährt, zurücksetzen
-            if (car.position.z > 200) car.position.z = -200;
-            if (car.position.z < -200) car.position.z = 200;
+            car.position.x = car.userData.roadCoord + laneOffset;
+
+            if (car.position.z > ROAD_LIMIT) car.position.z = -ROAD_LIMIT;
+            if (car.position.z < -ROAD_LIMIT) car.position.z = ROAD_LIMIT;
+
+            for (let i = 0; i < CITY_ROADS.length; i++) {
+                const intersection = CITY_ROADS[i];
+                if (Math.abs(car.position.z - intersection) < 1.2 && car.userData.turnCooldown === 0) {
+                    if (Math.random() < 0.3) {
+                        car.userData.axis = 'x';
+                        car.userData.roadCoord = intersection;
+                        car.userData.direction = Math.random() < 0.5 ? 1 : -1;
+                        car.userData.turnCooldown = 60;
+                    }
+                    break;
+                }
+            }
         } else {
             car.position.x += speed * direction;
-            if (car.position.x > 200) car.position.x = -200;
-            if (car.position.x < -200) car.position.x = 200;
+            car.position.z = car.userData.roadCoord + laneOffset;
+
+            if (car.position.x > ROAD_LIMIT) car.position.x = -ROAD_LIMIT;
+            if (car.position.x < -ROAD_LIMIT) car.position.x = ROAD_LIMIT;
+
+            for (let i = 0; i < CITY_ROADS.length; i++) {
+                const intersection = CITY_ROADS[i];
+                if (Math.abs(car.position.x - intersection) < 1.2 && car.userData.turnCooldown === 0) {
+                    if (Math.random() < 0.3) {
+                        car.userData.axis = 'z';
+                        car.userData.roadCoord = intersection;
+                        car.userData.direction = Math.random() < 0.5 ? 1 : -1;
+                        car.userData.turnCooldown = 60;
+                    }
+                    break;
+                }
+            }
         }
+
+        if (car.userData.axis === 'z') {
+            car.rotation.y = car.userData.direction > 0 ? 0 : Math.PI;
+        } else {
+            car.rotation.y = car.userData.direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+        }
+
+        car.position.y = getTerrainHeightAt(car.position.x, car.position.z) + 0.5;
         
         // Räder drehen
         car.children.forEach(child => {
@@ -4850,12 +6692,18 @@ function updateNPCs() {
         const distance = direction.length();
         
         if (distance < 2) {
-            // Neues Ziel setzen
-            npc.userData.target = new THREE.Vector3(
-                (Math.random() - 0.5) * 350,
-                0,
-                (Math.random() - 0.5) * 350
-            );
+            // Neues Ziel setzen (auf Straßen)
+            const streetPositions = npc.userData.streetPositions || [];
+            if (streetPositions.length) {
+                const next = streetPositions[Math.floor(Math.random() * streetPositions.length)];
+                npc.userData.target = new THREE.Vector3(next.x, 0, next.z);
+            } else {
+                npc.userData.target = new THREE.Vector3(
+                    (Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2,
+                    0,
+                    (Math.random() - 0.5) * (MAINLAND_BOUND - 80) * 2
+                );
+            }
         } else {
             direction.normalize();
             npc.position.x += direction.x * npc.userData.speed;
@@ -4864,12 +6712,14 @@ function updateNPCs() {
             
             // Lauf-Animation (leichtes Auf und Ab)
             npc.userData.walkTimer += 0.15;
-            npc.position.y = Math.abs(Math.sin(npc.userData.walkTimer)) * 0.05;
         }
         
         // Im Bereich bleiben
-        npc.position.x = Math.max(-180, Math.min(180, npc.position.x));
-        npc.position.z = Math.max(-180, Math.min(180, npc.position.z));
+        npc.position.x = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, npc.position.x));
+        npc.position.z = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, npc.position.z));
+        // Terrain-Höhe + Lauf-Animation
+        const walkBob = Math.abs(Math.sin(npc.userData.walkTimer || 0)) * 0.05;
+        npc.position.y = getTerrainHeightAt(npc.position.x, npc.position.z) + 0.1 + walkBob;
     });
 }
 
@@ -4901,9 +6751,9 @@ function updateAnimals() {
             // Hunde und Katzen laufen herum
             if (!animal.userData.target || Math.random() < 0.005) {
                 animal.userData.target = new THREE.Vector3(
-                    (Math.random() - 0.5) * 300,
+                    (Math.random() - 0.5) * (MAINLAND_BOUND - 120) * 2,
                     0,
-                    (Math.random() - 0.5) * 300
+                    (Math.random() - 0.5) * (MAINLAND_BOUND - 120) * 2
                 );
             }
             
@@ -4924,8 +6774,9 @@ function updateAnimals() {
             }
             
             // Im Bereich bleiben
-            animal.position.x = Math.max(-180, Math.min(180, animal.position.x));
-            animal.position.z = Math.max(-180, Math.min(180, animal.position.z));
+            animal.position.x = Math.max(-MAINLAND_BOUND + 40, Math.min(MAINLAND_BOUND - 40, animal.position.x));
+            animal.position.z = Math.max(-MAINLAND_BOUND + 40, Math.min(MAINLAND_BOUND - 40, animal.position.z));
+            animal.position.y = getTerrainHeightAt(animal.position.x, animal.position.z) + 0.1;
         }
     });
 }

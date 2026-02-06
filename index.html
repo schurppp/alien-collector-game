@@ -423,6 +423,45 @@
                 </div>
             </div>
         </div>
+
+        <!-- ====================================== -->
+        <!-- PAUSE MENU -->
+        <!-- ====================================== -->
+        <div id="pause-popup" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>⏸️ Pause</h2>
+                    <button class="popup-close" onclick="resumeGame()">✕</button>
+                </div>
+                <div class="popup-body centered">
+                    <p>Spiel pausiert. Du kannst Einstellungen öffnen oder ins Menü zurück.</p>
+                </div>
+                <div class="popup-footer">
+                    <button class="menu-btn" onclick="resumeGame()">Weiter</button>
+                    <button class="menu-btn" onclick="openSettings()">Einstellungen</button>
+                    <button class="menu-btn primary" onclick="backToMenuFromPause()">Zum Menü</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TRUHE / LAGER POPUP -->
+        <div id="chest-popup" class="popup hidden">
+            <div class="popup-content">
+                <div class="popup-header">
+                    <h2>📦 Truhe</h2>
+                    <button class="popup-close" onclick="closeChest()">✕</button>
+                </div>
+                <div class="popup-body">
+                    <div id="chest-items" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;min-height:120px;">
+                        <p style="grid-column:1/-1;text-align:center;color:#888;">Truhe ist leer</p>
+                    </div>
+                    <div style="margin-top:12px;text-align:center;">
+                        <button class="menu-btn" onclick="storeItemInChest()" style="margin:4px;">Kind einlagern</button>
+                        <button class="menu-btn" onclick="takeItemFromChest()" style="margin:4px;">Kind entnehmen</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     
     <!-- Three.js Library -->
