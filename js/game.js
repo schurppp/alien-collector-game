@@ -20,6 +20,20 @@ let npcs = [];      // Zivilisten
 let animals = [];   // Tiere (Hunde, Katzen, Vögel)
 let seaCreatures = []; // Fische, Haie
 let seaBoats = [];   // Andere Boote
+let skyDome = null;
+let skyEnvMap = null;
+let waterNoiseMap = null;
+let skyCanvas = null;
+let skyCtx = null;
+let skyTexture = null;
+let lastEnvUpdate = -999;
+let lastSkyHeight = 0;
+let sunLight = null;
+let fillLight = null;
+let hemiLight = null;
+let ambientLight = null;
+let windowGlowMaterials = [];
+let interiorLights = [];
 let collectedAliens = 0;
 let deliveredAliens = 0;
 const TOTAL_ALIENS = 8;
@@ -198,6 +212,8 @@ let boatDirection = 'toIsland';
 
 // Zeit für Animationen
 let clock;
+let gameTime = 0;
+const DAY_LENGTH = 240; // Sekunden für einen vollen Tag-Nacht-Zyklus
 
 // First-Person Kamera Steuerung
 let yaw = 0;      // Horizontale Rotation
@@ -215,7 +231,8 @@ let isJumping = false;
 let jumpVelocity = 0;
 const GRAVITY = 0.015;
 const JUMP_FORCE = 0.25;
-const GROUND_LEVEL = 3.5;  // Augenhöhe über dem Boden
+const GROUND_LEVEL = 1.7;  // Augenhöhe über dem Boden (realistischer Maßstab)
+const PLAYER_RADIUS = 0.6;
 
 // Gebäude-Kollision
 let buildingColliders = [];
@@ -243,13 +260,14 @@ const keys = {
 // ==========================================
 function init() {
     clock = new THREE.Clock();
+    gameTime = 0;
     
     // Szene erstellen
     scene = new THREE.Scene();
     
     // Realistischer Himmel
     scene.background = new THREE.Color(0x87CEEB);
-    scene.fog = new THREE.FogExp2(0x87CEEB, 0.004); // Dynamisch per Settings anpassbar
+    scene.fog = new THREE.FogExp2(0xb7d7f0, 0.0036); // Dynamisch per Settings anpassbar
 
     // First-Person Kamera mit reduzierter Sichtweite
     camera = new THREE.PerspectiveCamera(
@@ -259,7 +277,8 @@ function init() {
         700  // Wird später durch Settings überschrieben
     );
     // Spawnpoint auf der Insel vor dem Haus
-    camera.position.set(ISLAND_CENTER_X, 6, 10); // Auf der Insel (Höhe 6 = Inselboden + Augenhöhe)
+    const spawnY = getIslandGroundHeight(ISLAND_CENTER_X, GROUND_LEVEL, 10) + GROUND_LEVEL;
+    camera.position.set(ISLAND_CENTER_X, spawnY, 10);
 
     // Renderer mit Performance-Optimierungen
     const canvas = document.getElementById('game-canvas');
@@ -272,10 +291,15 @@ function init() {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Reduziert
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.physicallyCorrectLights = true;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.BasicShadowMap; // Schnellere Schatten
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 1.05;
+
+    // Realistischere Umgebung / Himmel
+    createSkyEnvironment();
 
     // Licht hinzufügen
     setupLights();
@@ -337,35 +361,206 @@ function setupPointerLock() {
 }
 
 // ==========================================
+// HIMMEL + UMGEBUNG (REALISTISCHER LOOK)
+// ==========================================
+function createSkyEnvironment() {
+    if (!renderer) return;
+
+    const size = 512;
+    skyCanvas = document.createElement('canvas');
+    skyCanvas.width = size;
+    skyCanvas.height = size;
+    skyCtx = skyCanvas.getContext('2d');
+
+    skyTexture = new THREE.CanvasTexture(skyCanvas);
+    skyTexture.encoding = THREE.sRGBEncoding;
+    skyTexture.mapping = THREE.EquirectangularReflectionMapping;
+    skyTexture.needsUpdate = true;
+
+    scene.background = skyTexture;
+
+    updateSkyEnvironment(0.4, 0.2, 1.0, 0.0);
+}
+
+function updateSkyEnvironment(sunAngle, sunHeight, dayBlend, warmBlend) {
+    if (!skyCtx || !skyCanvas) return;
+    const size = skyCanvas.width;
+
+    const nightTop = new THREE.Color(0x08121e);
+    const nightMid = new THREE.Color(0x0b1b2e);
+    const nightHorizon = new THREE.Color(0x18263a);
+
+    const dayTop = new THREE.Color(0x6ea3e0);
+    const dayMid = new THREE.Color(0xa6cbea);
+    const dayHorizon = new THREE.Color(0xf0d7a3);
+
+    const warmTop = new THREE.Color(0x8a5b9b);
+    const warmMid = new THREE.Color(0xf0a565);
+    const warmHorizon = new THREE.Color(0xf6c187);
+
+    const top = nightTop.clone().lerp(dayTop, dayBlend).lerp(warmTop, warmBlend * 0.6);
+    const mid = nightMid.clone().lerp(dayMid, dayBlend).lerp(warmMid, warmBlend * 0.8);
+    const horizon = nightHorizon.clone().lerp(dayHorizon, dayBlend).lerp(warmHorizon, warmBlend);
+
+    const grad = skyCtx.createLinearGradient(0, 0, 0, size);
+    grad.addColorStop(0, `#${top.getHexString()}`);
+    grad.addColorStop(0.5, `#${mid.getHexString()}`);
+    grad.addColorStop(1, `#${horizon.getHexString()}`);
+    skyCtx.fillStyle = grad;
+    skyCtx.fillRect(0, 0, size, size);
+
+    const sunX = size * (0.5 + Math.cos(sunAngle) * 0.25);
+    const sunY = size * (0.6 - sunHeight * 0.35);
+    const glowRadius = 140;
+    const sunIntensity = Math.max(0, sunHeight) * 0.9 + 0.08;
+
+    const sunGradient = skyCtx.createRadialGradient(sunX, sunY, 10, sunX, sunY, glowRadius);
+    sunGradient.addColorStop(0, `rgba(255, 244, 214, ${0.9 * sunIntensity})`);
+    sunGradient.addColorStop(0.2, `rgba(255, 210, 150, ${0.45 * sunIntensity})`);
+    sunGradient.addColorStop(0.6, `rgba(255, 180, 120, ${0.18 * sunIntensity})`);
+    sunGradient.addColorStop(1, 'rgba(255, 180, 120, 0)');
+    skyCtx.fillStyle = sunGradient;
+    skyCtx.fillRect(0, 0, size, size);
+
+    skyTexture.needsUpdate = true;
+
+    if (Math.abs(sunHeight - lastSkyHeight) > 0.05 || gameTime - lastEnvUpdate > 8) {
+        lastSkyHeight = sunHeight;
+        lastEnvUpdate = gameTime;
+        if (skyEnvMap) {
+            skyEnvMap.dispose();
+            skyEnvMap = null;
+        }
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        skyEnvMap = pmrem.fromEquirectangular(skyTexture).texture;
+        scene.environment = skyEnvMap;
+        pmrem.dispose();
+    }
+}
+
+function updateDayNightCycle() {
+    if (!sunLight || !renderer || !scene) return;
+
+    const dayPhase = (gameTime % DAY_LENGTH) / DAY_LENGTH;
+    const sunAngle = dayPhase * Math.PI * 2 - Math.PI / 2;
+    const sunHeight = Math.sin(sunAngle);
+
+    const dayBlend = smoothstep(-0.08, 0.35, sunHeight);
+    const warmBlend = Math.max(0, 1 - Math.abs(sunHeight) * 2.2);
+
+    const sunDistance = 260;
+    const sunY = 80 + sunHeight * 240;
+    sunLight.position.set(Math.cos(sunAngle) * sunDistance, sunY, Math.sin(sunAngle) * sunDistance);
+
+    const warmColor = new THREE.Color(0xffb36b);
+    const noonColor = new THREE.Color(0xffffff);
+    sunLight.color.copy(noonColor).lerp(warmColor, warmBlend);
+    sunLight.intensity = 0.08 + dayBlend * 1.4;
+
+    if (fillLight) {
+        fillLight.color.lerpColors(new THREE.Color(0x1d2b4f), new THREE.Color(0x98b8e6), dayBlend);
+        fillLight.intensity = 0.05 + dayBlend * 0.35;
+    }
+
+    if (ambientLight) {
+        ambientLight.color.lerpColors(new THREE.Color(0x0c1420), new THREE.Color(0x404050), dayBlend);
+        ambientLight.intensity = 0.08 + dayBlend * 0.32;
+    }
+
+    if (hemiLight) {
+        hemiLight.color.lerpColors(new THREE.Color(0x091326), new THREE.Color(0x87CEEB), dayBlend);
+        hemiLight.groundColor.lerpColors(new THREE.Color(0x0f1418), new THREE.Color(0x4a7c4a), dayBlend);
+        hemiLight.intensity = 0.12 + dayBlend * 0.55;
+    }
+
+    if (scene.fog) {
+        scene.fog.color.lerpColors(new THREE.Color(0x0b1525), new THREE.Color(0xb7d7f0), dayBlend);
+        scene.fog.density = 0.0045 - dayBlend * 0.0012;
+    }
+
+    renderer.toneMappingExposure = 0.7 + dayBlend * 0.55;
+
+    updateSkyEnvironment(sunAngle, sunHeight, dayBlend, warmBlend);
+
+    const nightBlend = 1 - dayBlend;
+    // Straßenlaternen
+    if (streetLights.length) {
+        streetLights.forEach((entry) => {
+            if (entry.light) {
+                entry.light.intensity = entry.baseIntensity * (0.15 + nightBlend);
+            }
+            if (entry.glass && entry.glass.material) {
+                entry.glass.material.emissiveIntensity = entry.baseEmissive * (0.2 + nightBlend);
+            }
+        });
+    }
+
+    // Fensterlichter
+    if (windowGlowMaterials.length) {
+        windowGlowMaterials.forEach((entry) => {
+            entry.material.emissiveIntensity = entry.baseIntensity * (0.2 + nightBlend);
+        });
+    }
+
+    // Innenlicht
+    if (interiorLights.length) {
+        interiorLights.forEach((entry) => {
+            entry.light.intensity = entry.baseIntensity * (0.35 + nightBlend);
+        });
+    }
+
+    // Fahrzeuglichter
+    if (vehicles.length) {
+        vehicles.forEach((car) => {
+            const headlights = car.userData && car.userData.headlights ? car.userData.headlights : [];
+            headlights.forEach((h) => {
+                h.mesh.material.emissiveIntensity = h.baseIntensity * (0.2 + nightBlend * 1.4);
+            });
+            const taillights = car.userData && car.userData.taillights ? car.userData.taillights : [];
+            taillights.forEach((t) => {
+                t.mesh.material.emissiveIntensity = t.baseIntensity * (0.3 + nightBlend * 1.2);
+            });
+        });
+    }
+
+    // Wasserfarbe leicht anpassen
+    if (water && water.material && water.material.color) {
+        const nightWater = new THREE.Color(0x0b2d45);
+        const dayWater = new THREE.Color(0x1b6fa8);
+        water.material.color.lerpColors(nightWater, dayWater, dayBlend);
+    }
+}
+
+// ==========================================
 // REALISTISCHE BELEUCHTUNG
 // ==========================================
 function setupLights() {
     // Ambient Light - wärmer für realistischen Look
-    const ambientLight = new THREE.AmbientLight(0x404050, 0.5);
+    ambientLight = new THREE.AmbientLight(0x404050, 0.4);
     scene.add(ambientLight);
 
     // Hauptsonne - warmes Nachmittagslicht
-    const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.5);
-    sunLight.position.set(150, 300, 100);
+    sunLight = new THREE.DirectionalLight(0xfff5e6, 1.2);
+    sunLight.position.set(150, 260, 100);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 10;
     sunLight.shadow.camera.far = 600;
-    sunLight.shadow.camera.left = -200;
-    sunLight.shadow.camera.right = 200;
-    sunLight.shadow.camera.top = 200;
-    sunLight.shadow.camera.bottom = -200;
+    sunLight.shadow.camera.left = -220;
+    sunLight.shadow.camera.right = 220;
+    sunLight.shadow.camera.top = 220;
+    sunLight.shadow.camera.bottom = -220;
     sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
 
     // Fülllicht (bläulich vom Himmel)
-    const fillLight = new THREE.DirectionalLight(0x8899cc, 0.4);
-    fillLight.position.set(-100, 100, -50);
+    fillLight = new THREE.DirectionalLight(0x8899cc, 0.35);
+    fillLight.position.set(-100, 120, -60);
     scene.add(fillLight);
 
     // Hemisphere Light für natürliche Umgebungsbeleuchtung
-    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x4a7c4a, 0.6);
+    hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x4a7c4a, 0.5);
     scene.add(hemiLight);
 }
 
@@ -373,6 +568,9 @@ function setupLights() {
 // WELT ERSTELLEN
 // ==========================================
 function createWorld() {
+    windowGlowMaterials = [];
+    interiorLights = [];
+    streetLights = [];
     createWater();
     createMainland();
     createRiversAndLakes();
@@ -394,16 +592,52 @@ function createWorld() {
 // ==========================================
 // REALISTISCHES WASSER
 // ==========================================
+function createWaterNoiseTexture() {
+    const small = document.createElement('canvas');
+    small.width = 64;
+    small.height = 64;
+    const sctx = small.getContext('2d');
+    const img = sctx.createImageData(64, 64);
+    for (let i = 0; i < img.data.length; i += 4) {
+        const v = 140 + Math.random() * 80;
+        img.data[i] = v;
+        img.data[i + 1] = v;
+        img.data[i + 2] = v;
+        img.data[i + 3] = 255;
+    }
+    sctx.putImageData(img, 0, 0);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(small, 0, 0, 128, 128);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(18, 18);
+    return texture;
+}
+
 function createWater() {
     const waterGeometry = new THREE.PlaneGeometry(WORLD_SIZE * 6, WORLD_SIZE * 6, 120, 120);
-    
-    const waterMaterial = new THREE.MeshStandardMaterial({
-        color: 0x006994,
+
+    waterNoiseMap = createWaterNoiseTexture();
+    const waterMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0x1b6fa8,
         transparent: true,
-        opacity: 0.85,
-        roughness: 0.1,
-        metalness: 0.8
+        opacity: 0.9,
+        roughness: 0.22,
+        metalness: 0.12,
+        clearcoat: 0.6,
+        clearcoatRoughness: 0.2,
+        reflectivity: 0.4
     });
+    waterMaterial.bumpMap = waterNoiseMap;
+    waterMaterial.bumpScale = 0.55;
+    waterMaterial.envMapIntensity = 0.6;
     
     water = new THREE.Mesh(waterGeometry, waterMaterial);
     water.rotation.x = -Math.PI / 2;
@@ -540,13 +774,20 @@ function createRiversAndLakes() {
 function createRiverWater() {
     if (!riverCurve) return;
     const riverGeometry = new THREE.TubeGeometry(riverCurve, 140, RIVER_WIDTH * 0.45, 8, false);
-    const riverMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2e6f9e,
-        roughness: 0.2,
-        metalness: 0.4,
+    const riverMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0x2a6c9b,
+        roughness: 0.25,
+        metalness: 0.15,
+        clearcoat: 0.5,
+        clearcoatRoughness: 0.2,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.92
     });
+    if (waterNoiseMap) {
+        riverMaterial.bumpMap = waterNoiseMap;
+        riverMaterial.bumpScale = 0.35;
+        riverMaterial.envMapIntensity = 0.5;
+    }
     const riverMesh = new THREE.Mesh(riverGeometry, riverMaterial);
     riverMesh.castShadow = false;
     riverMesh.receiveShadow = true;
@@ -554,15 +795,23 @@ function createRiverWater() {
 }
 
 function createLakeWater() {
+    const lakeMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0x2f7aa8,
+        roughness: 0.28,
+        metalness: 0.12,
+        clearcoat: 0.5,
+        clearcoatRoughness: 0.2,
+        transparent: true,
+        opacity: 0.92
+    });
+    if (waterNoiseMap) {
+        lakeMaterial.bumpMap = waterNoiseMap;
+        lakeMaterial.bumpScale = 0.3;
+        lakeMaterial.envMapIntensity = 0.5;
+    }
     const lake = new THREE.Mesh(
         new THREE.CircleGeometry(LAKE_RADIUS, 36),
-        new THREE.MeshStandardMaterial({
-            color: 0x2f7aa8,
-            roughness: 0.25,
-            metalness: 0.35,
-            transparent: true,
-            opacity: 0.9
-        })
+        lakeMaterial
     );
     lake.rotation.x = -Math.PI / 2;
     lake.position.set(LAKE_CENTER.x, LAKE_WATER_LEVEL, LAKE_CENTER.z);
@@ -1077,7 +1326,7 @@ function createSmallBoat() {
 
 function updateSeaLife() {
     if (!seaCreatures.length) return;
-    const time = clock.elapsedTime;
+    const time = gameTime;
 
     seaCreatures.forEach(creature => {
         const data = creature.userData;
@@ -1099,7 +1348,7 @@ function updateSeaLife() {
 
 function updateSeaBoats() {
     if (!seaBoats.length) return;
-    const time = clock.elapsedTime;
+    const time = gameTime;
 
     seaBoats.forEach(boat => {
         const data = boat.userData;
@@ -1823,16 +2072,22 @@ function createResidentialHouse(x, z) {
             sill.position.z = 0.15;
             windowGroup.add(sill);
             
-            // Fensterglas mit leichter Spiegelung
+            // Fensterglas mit leichter Spiegelung + Innenlicht
+            const lightOn = Math.random() > 0.6;
+            const glassMat = new THREE.MeshStandardMaterial({ 
+                color: lightOn ? 0xFFE9B3 : 0x87CEEB, 
+                emissive: lightOn ? 0x9c7a2c : 0x0b0f1a,
+                emissiveIntensity: lightOn ? 0.5 : 0.1,
+                roughness: 0.05, 
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.8
+            });
+            glassMat.envMapIntensity = 0.7;
+            windowGlowMaterials.push({ material: glassMat, baseIntensity: glassMat.emissiveIntensity });
             const glass = new THREE.Mesh(
                 new THREE.BoxGeometry(2, 2.2, 0.05),
-                new THREE.MeshStandardMaterial({ 
-                    color: 0x87CEEB, 
-                    roughness: 0.1, 
-                    metalness: 0.3,
-                    transparent: true,
-                    opacity: 0.85
-                })
+                glassMat
             );
             glass.position.z = -0.03;
             windowGroup.add(glass);
@@ -1862,15 +2117,21 @@ function createResidentialHouse(x, z) {
     // Seitenfenster
     [-1, 1].forEach(side => {
         for (let wy = 0; wy < floors; wy++) {
+            const sideLight = Math.random() > 0.65;
+            const sideGlassMat = new THREE.MeshStandardMaterial({ 
+                color: sideLight ? 0xFFE9B3 : 0x87CEEB, 
+                emissive: sideLight ? 0x9c7a2c : 0x0b0f1a,
+                emissiveIntensity: sideLight ? 0.5 : 0.1,
+                roughness: 0.05, 
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.8
+            });
+            sideGlassMat.envMapIntensity = 0.7;
+            windowGlowMaterials.push({ material: sideGlassMat, baseIntensity: sideGlassMat.emissiveIntensity });
             const sideWindow = new THREE.Mesh(
                 new THREE.BoxGeometry(0.1, 1.8, 1.8),
-                new THREE.MeshStandardMaterial({ 
-                    color: 0x87CEEB, 
-                    roughness: 0.1, 
-                    metalness: 0.3,
-                    transparent: true,
-                    opacity: 0.85
-                })
+                sideGlassMat
             );
             sideWindow.position.set(side * (houseWidth/2 + 0.05), 4.3 + wy * 4, 0);
             building.add(sideWindow);
@@ -2186,9 +2447,15 @@ function createRoadStreetLight(x, z) {
     );
     lampGlass.position.set(0, 4.6, 1.2);
     light.add(lampGlass);
+
+    const lampLight = new THREE.PointLight(0xffd8a3, 0.9, 28, 2);
+    lampLight.position.set(0, 4.6, 1.2);
+    lampLight.castShadow = false;
+    light.add(lampLight);
     
     light.position.set(x, 0, z);
     scene.add(light);
+    streetLights.push({ light: lampLight, glass: lampGlass, baseIntensity: lampLight.intensity, baseEmissive: lampGlass.material.emissiveIntensity });
 }
 
 // Zebrastreifen erstellen
@@ -2238,6 +2505,30 @@ function addBuildingCollider(x, z, width, depth) {
         minZ: z - depth / 2,
         maxZ: z + depth / 2
     });
+}
+
+function addRectBuildingWallColliders(centerX, centerZ, width, depth, wallThickness, doorWidth) {
+    const halfW = width / 2;
+    const halfD = depth / 2;
+    const thickness = wallThickness;
+
+    // Seitenwände
+    addBuildingCollider(centerX - halfW, centerZ, thickness, depth);
+    addBuildingCollider(centerX + halfW, centerZ, thickness, depth);
+
+    // Rückwand
+    addBuildingCollider(centerX, centerZ - halfD, width, thickness);
+
+    // Vorderwand mit Türöffnung
+    if (doorWidth && doorWidth < width) {
+        const sideWidth = (width - doorWidth) / 2;
+        const offset = doorWidth / 2 + sideWidth / 2;
+        const frontZ = centerZ + halfD;
+        addBuildingCollider(centerX - offset, frontZ, sideWidth, thickness);
+        addBuildingCollider(centerX + offset, frontZ, sideWidth, thickness);
+    } else {
+        addBuildingCollider(centerX, centerZ + halfD, width, thickness);
+    }
 }
 
 function createRealisticBuilding() {
@@ -3094,6 +3385,11 @@ function createHarborLamp() {
     light.position.set(0, 4.0, 1.1);
     lamp.add(light);
 
+    const bulb = new THREE.PointLight(0xffe2a8, 0.8, 22, 2);
+    bulb.position.set(0, 4.0, 1.1);
+    lamp.add(bulb);
+    streetLights.push({ light: bulb, glass: light, baseIntensity: bulb.intensity, baseEmissive: light.material.emissiveIntensity });
+
     return lamp;
 }
 
@@ -3193,14 +3489,37 @@ function createHouse() {
             fwb2.position.set(0, baseY + 0.5, HOUSE_D / 2);
             house.add(fwb2);
             // Fenster Glas
+            const windowLight = Math.random() > 0.55;
+            const windowMat = new THREE.MeshStandardMaterial({
+                color: windowLight ? 0xFFE9B3 : 0x87CEEB,
+                emissive: windowLight ? 0x9c7a2c : 0x0b0f1a,
+                emissiveIntensity: windowLight ? 0.5 : 0.1,
+                transparent: true,
+                opacity: 0.45,
+                roughness: 0.08,
+                metalness: 0.2
+            });
+            windowMat.envMapIntensity = 0.6;
+            windowGlowMaterials.push({ material: windowMat, baseIntensity: windowMat.emissiveIntensity });
             const winGlass = new THREE.Mesh(new THREE.BoxGeometry(5.6, 1.5, 0.1),
-                new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4 }));
+                windowMat);
             winGlass.position.set(0, baseY + 2, HOUSE_D / 2 + 0.2);
             house.add(winGlass);
         }
 
         // Seitenfenster
-        const winMat = new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4, roughness: 0.1 });
+        const sideWindowLight = Math.random() > 0.6;
+        const winMat = new THREE.MeshStandardMaterial({
+            color: sideWindowLight ? 0xFFE9B3 : 0x87CEEB,
+            emissive: sideWindowLight ? 0x9c7a2c : 0x0b0f1a,
+            emissiveIntensity: sideWindowLight ? 0.45 : 0.1,
+            transparent: true,
+            opacity: 0.45,
+            roughness: 0.08,
+            metalness: 0.2
+        });
+        winMat.envMapIntensity = 0.6;
+        windowGlowMaterials.push({ material: winMat, baseIntensity: winMat.emissiveIntensity });
         [-1, 1].forEach(side => {
             const win = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.8, 2.5), winMat);
             win.position.set(side * (HOUSE_W / 2 + 0.1), baseY + 2.2, -2);
@@ -3214,6 +3533,7 @@ function createHouse() {
         const light = new THREE.PointLight(0xffcc77, 0.8, 18);
         light.position.set(0, baseY + 3.5, 0);
         house.add(light);
+        interiorLights.push({ light, baseIntensity: light.intensity });
 
         // ======= TREPPE ZUM NÄCHSTEN STOCKWERK =======
         if (floor < 2) {
@@ -3401,6 +3721,10 @@ function createHouse() {
 
     house.position.set(houseX, floorY, houseZ);
     scene.add(house);
+
+    // Kollisionen für Hauswände (Türöffnung bleibt frei)
+    const wallCollider = WALL_THICK + 0.4;
+    addRectBuildingWallColliders(houseX, houseZ, HOUSE_W, HOUSE_D, wallCollider, 8);
 
     // ======= ZWEITE VILLA =======
     createVilla();
@@ -3614,6 +3938,7 @@ function createVilla() {
     const kellerLight = new THREE.PointLight(0xffffff, 0.6, 20);
     kellerLight.position.set(0, -0.5, 0);
     villa.add(kellerLight);
+    interiorLights.push({ light: kellerLight, baseIntensity: kellerLight.intensity });
 
     // ===== TRAININGSRAUM IM KELLER =====
     // Boxsack
@@ -3828,6 +4153,8 @@ function createVilla() {
     const egLight2 = new THREE.PointLight(0xffe4b5, 0.6, 15);
     egLight2.position.set(-8, 3.5, 3);
     villa.add(egLight2);
+    interiorLights.push({ light: egLight, baseIntensity: egLight.intensity });
+    interiorLights.push({ light: egLight2, baseIntensity: egLight2.intensity });
 
     // EG Treppe nach oben
     for (let s = 0; s < 10; s++) {
@@ -3862,7 +4189,18 @@ function createVilla() {
     });
 
     // Fenster OG1
-    const winMat = new THREE.MeshStandardMaterial({ color: 0x87CEEB, transparent: true, opacity: 0.4 });
+    const villaLight = Math.random() > 0.55;
+    const winMat = new THREE.MeshStandardMaterial({
+        color: villaLight ? 0xFFE9B3 : 0x87CEEB,
+        emissive: villaLight ? 0x9c7a2c : 0x0b0f1a,
+        emissiveIntensity: villaLight ? 0.5 : 0.1,
+        transparent: true,
+        opacity: 0.45,
+        roughness: 0.08,
+        metalness: 0.2
+    });
+    winMat.envMapIntensity = 0.6;
+    windowGlowMaterials.push({ material: winMat, baseIntensity: winMat.emissiveIntensity });
     [[-8, -VD / 2], [4, -VD / 2], [-8, VD / 2], [4, VD / 2]].forEach(([x, z]) => {
         const win = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 0.1), winMat);
         win.position.set(x, og1Y + 2.2, z + (z > 0 ? 0.3 : -0.3));
@@ -3873,6 +4211,7 @@ function createVilla() {
     const og1Light = new THREE.PointLight(0xffe4b5, 0.8, 20);
     og1Light.position.set(0, og1Y + 3.5, 0);
     villa.add(og1Light);
+    interiorLights.push({ light: og1Light, baseIntensity: og1Light.intensity });
 
     // Schlafzimmer OG1
     const villaBed = createBed();
@@ -3970,6 +4309,10 @@ function createVilla() {
     // Position der Villa auf der Insel
     villa.position.set(ISLAND_CENTER_X + 30, 2, 25);
     scene.add(villa);
+
+    // Kollisionen für Villa-Wände (Türöffnung frei lassen)
+    const villaWallCollider = WALL_T + 0.4;
+    addRectBuildingWallColliders(villa.position.x, villa.position.z, VW, VD, villaWallCollider, 10);
 }
 
 function createSofa() {
@@ -4202,6 +4545,8 @@ function createVehicles() {
 
 function createCar() {
     const car = new THREE.Group();
+    const headlights = [];
+    const taillights = [];
     
     // Realistischere Autofarben
     const carTypes = [
@@ -4238,6 +4583,10 @@ function createCar() {
         roughness: 0.05,
         metalness: 0.3
     });
+
+    bodyMaterial.envMapIntensity = 1.0;
+    chromeMaterial.envMapIntensity = 1.4;
+    glassMaterial.envMapIntensity = 0.9;
     
     const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.85 });
     const rimMaterial = new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.8 });
@@ -4404,12 +4753,13 @@ function createCar() {
             new THREE.MeshStandardMaterial({ 
                 color: 0xFFFFFF, 
                 emissive: 0xFFFFFF, 
-                emissiveIntensity: 0.4,
+                emissiveIntensity: 0.25,
                 roughness: 0.1
             })
         );
         headlight.position.set(x, 0.55, 2.15);
         car.add(headlight);
+        headlights.push({ mesh: headlight, baseIntensity: headlight.material.emissiveIntensity });
     });
     
     // Rücklichter
@@ -4419,12 +4769,13 @@ function createCar() {
             new THREE.MeshStandardMaterial({ 
                 color: 0xFF0000, 
                 emissive: 0x440000, 
-                emissiveIntensity: 0.5,
+                emissiveIntensity: 0.35,
                 roughness: 0.2
             })
         );
         taillight.position.set(x, 0.55, -2.1);
         car.add(taillight);
+        taillights.push({ mesh: taillight, baseIntensity: taillight.material.emissiveIntensity });
     });
     
     // Kühlergrill
@@ -4478,6 +4829,10 @@ function createCar() {
     exhaust.position.set(0.6, 0.2, -2.2);
     exhaust.rotation.x = Math.PI / 2;
     car.add(exhaust);
+
+    car.userData = car.userData || {};
+    car.userData.headlights = headlights;
+    car.userData.taillights = taillights;
     
     return car;
 }
@@ -4909,12 +5264,11 @@ function createNPCs() {
         // Ziel auch auf Straße setzen
         const targetPos = streetPositions[Math.floor(Math.random() * streetPositions.length)];
         
-        npc.userData = {
-            speed: 0.03 + Math.random() * 0.02,
-            target: new THREE.Vector3(targetPos.x, 0, targetPos.z),
-            walkTimer: Math.random() * 10,
-            streetPositions: streetPositions
-        };
+        npc.userData = npc.userData || {};
+        npc.userData.speed = 0.03 + Math.random() * 0.02;
+        npc.userData.target = new THREE.Vector3(targetPos.x, 0, targetPos.z);
+        npc.userData.walkTimer = Math.random() * 10;
+        npc.userData.streetPositions = streetPositions;
         npcs.push(npc);
         scene.add(npc);
     }
@@ -4922,6 +5276,7 @@ function createNPCs() {
 
 function createCivilian() {
     const npc = new THREE.Group();
+    const limbRefs = { arms: [], legs: [] };
     
     // Realistischere Kleidungsfarben
     const outfitTypes = [
@@ -4988,6 +5343,8 @@ function createCivilian() {
         calf.position.set(x, 0.24, 0);
         calf.castShadow = true;
         npc.add(calf);
+
+        limbRefs.legs.push({ upper: thigh, lower: calf });
     });
     
     // Hüfte
@@ -5065,6 +5422,8 @@ function createCivilian() {
         hand.position.set(armX * 1.15, 0.68, 0.03);
         hand.scale.set(0.8, 1, 0.5);
         npc.add(hand);
+
+        limbRefs.arms.push({ upper: upperArm, lower: lowerArm });
     });
     
     // Kragen
@@ -5249,6 +5608,25 @@ function createCivilian() {
             npc.add(brim);
         }
     }
+
+    // Zufällig: Rucksack
+    if (Math.random() > 0.72) {
+        const packMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.8 });
+        const pack = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.28, 0.08), packMat);
+        pack.position.set(0, 1.02, -0.12);
+        npc.add(pack);
+        const packFlap = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.04), packMat);
+        packFlap.position.set(0, 1.17, -0.08);
+        npc.add(packFlap);
+    }
+
+    // Maßstab + Animationsdaten
+    const scale = 0.92 + Math.random() * 0.22;
+    npc.scale.set(scale, scale, scale);
+    npc.userData = npc.userData || {};
+    npc.userData.limbs = limbRefs;
+    npc.userData.scale = scale;
+    npc.userData.walkPhase = Math.random() * Math.PI * 2;
     
     return npc;
 }
@@ -5778,8 +6156,10 @@ function restartGame() {
 }
 
 function resetGame() {
+    gameTime = 0;
     // Zurück zur Insel spawnen
-    player.position.set(ISLAND_CENTER_X, 6, 10);
+    const spawnY = getIslandGroundHeight(ISLAND_CENTER_X, GROUND_LEVEL, 10) + GROUND_LEVEL;
+    player.position.set(ISLAND_CENTER_X, spawnY, 10);
     playerOnBoat = false;
     boatMoving = false;
     boat.position.set(BOAT_ISLAND_X, 1, 0); // Boot bei der Insel
@@ -5788,7 +6168,7 @@ function resetGame() {
     // First-Person Kamera zurücksetzen
     yaw = 0;
     pitch = 0;
-    camera.position.set(ISLAND_CENTER_X, 6, 10); // Auf der Insel (Höhe 6)
+    camera.position.set(ISLAND_CENTER_X, spawnY, 10);
     camera.rotation.set(0, 0, 0);
     
     collectedAliens = 0;
@@ -5879,11 +6259,7 @@ function handleInteraction() {
     }
 
     // Prüfe ob Spieler im Haus ist (größeres Haus, 3 Stockwerke)
-    const houseX = ISLAND_CENTER_X;
-    const houseZ = -15;
-    const playerInHouseX = camera.position.x > houseX - 11 && camera.position.x < houseX + 11;
-    const playerInHouseZ = camera.position.z > houseZ - 9 && camera.position.z < houseZ + 12;
-    insideHouse = playerInHouseX && playerInHouseZ;
+    updateInsideHouseStatus();
 
     // Aliens in Gefängnisse abliefern (im Haus)
     if (insideHouse && collectedAliens > 0) {
@@ -6173,7 +6549,7 @@ function updatePlayer(deltaTime) {
     if (isMoving && !isJumping) {
         const bobSpeed = canSprintNow ? 14 : 10;
         const bobAmount = canSprintNow ? 0.05 : 0.03;
-        bobOffset = Math.sin(clock.elapsedTime * bobSpeed) * bobAmount;
+        bobOffset = Math.sin(gameTime * bobSpeed) * bobAmount;
     }
 
     // Grenzen - Festland
@@ -6191,6 +6567,8 @@ function updatePlayer(deltaTime) {
             player.position.z = ISLAND_CENTER_Z + Math.sin(angle) * (ISLAND_RADIUS - 2);
         }
     }
+
+    updateInsideHouseStatus();
 
     // Kamera-Position aktualisieren
     camera.position.x = player.position.x;
@@ -6319,38 +6697,86 @@ function isOnIsland() {
     return player.position.x > ISLAND_THRESHOLD_X;
 }
 
+function isInsideMainHouseBounds(px, pz, padding = 0) {
+    const houseX = ISLAND_CENTER_X;
+    const houseZ = -15;
+    const halfW = 22 / 2;
+    const halfD = 18 / 2;
+    return (
+        px > houseX - halfW + padding &&
+        px < houseX + halfW - padding &&
+        pz > houseZ - halfD + padding &&
+        pz < houseZ + halfD - padding
+    );
+}
+
+function isInsideVillaBounds(px, pz, padding = 0) {
+    const villaX = ISLAND_CENTER_X + 30;
+    const villaZ = 25;
+    const halfW = 28 / 2;
+    const halfD = 22 / 2;
+    return (
+        px > villaX - halfW + padding &&
+        px < villaX + halfW - padding &&
+        pz > villaZ - halfD + padding &&
+        pz < villaZ + halfD - padding
+    );
+}
+
+function updateInsideHouseStatus() {
+    insideHouse = isInsideMainHouseBounds(player.position.x, player.position.z, 0.4);
+}
+
 function getIslandGroundHeight(px, py, pz) {
     // Base island surface
     let ground = 2;
+    const feetY = py - GROUND_LEVEL;
     
     // Check if player is inside main house (3 floors)
     const houseX = ISLAND_CENTER_X;
     const houseZ = -15;
-    const inHouseX = px > houseX - 11 && px < houseX + 11;
-    const inHouseZ = pz > houseZ - 9 && pz < houseZ + 12;
+    const HOUSE_W = 22;
+    const HOUSE_D = 18;
+    const houseHalfW = HOUSE_W / 2;
+    const houseHalfD = HOUSE_D / 2;
+    const inHouseX = px > houseX - houseHalfW && px < houseX + houseHalfW;
+    const inHouseZ = pz > houseZ - houseHalfD && pz < houseZ + houseHalfD;
     
     if (inHouseX && inHouseZ) {
-        // Floor heights: EG=3.15, 1.OG=7.15, 2.OG=11.15
-        const floors = [3.15, 7.15, 11.15];
-        // Find the highest floor the player is standing on or above
-        for (let i = floors.length - 1; i >= 0; i--) {
-            if (py >= floors[i] - 0.5) {
-                ground = floors[i];
-                break;
-            }
+        // Floor heights (world-space): EG=3.15, 1.OG=7.15, 2.OG=11.15
+        const floor0 = 3.15;
+        const floor1 = 7.15;
+        const floor2 = 11.15;
+        // Find the highest floor based on Füße statt Augenhöhe
+        if (feetY >= floor2 - 0.3) {
+            ground = floor2;
+        } else if (feetY >= floor1 - 0.3) {
+            ground = floor1;
+        } else {
+            ground = floor0;
         }
         // On stairs (right side, back area) - smooth ramp
-        const stairX = houseX + 9; // right side near wall
+        const stairX = houseX + houseHalfW - 2; // right side near wall
         if (px > stairX - 3 && px < stairX + 1) {
-            const stairProgress = (pz - (houseZ - 9)) / 18; // 0-1 along depth
+            const stairStartZ = houseZ - houseHalfD + 1.5;
+            const stairRun = 0.8 * 10;
+            const stairProgress = (pz - stairStartZ) / stairRun; // 0-1 entlang der Treppe
             const clampedProgress = Math.max(0, Math.min(1, stairProgress));
             // Check which floor transition
-            if (py < 7.15 && py >= 3.0) {
-                ground = 3.15 + clampedProgress * 4;
-            } else if (py < 11.15 && py >= 7.0) {
-                ground = 7.15 + clampedProgress * 4;
+            if (feetY < floor1 - 0.2) {
+                ground = floor0 + clampedProgress * 4;
+            } else if (feetY < floor2 - 0.2) {
+                ground = floor1 + clampedProgress * 4;
             }
         }
+    } else {
+        // Veranda vorne (gleiches Niveau wie EG)
+        const onPorch =
+            px > houseX - (houseHalfW + 2) &&
+            px < houseX + (houseHalfW + 2) &&
+            pz >= houseZ + houseHalfD &&
+            pz <= houseZ + houseHalfD + 6;
+        if (onPorch) ground = 3.15;
     }
     
     // Check if in villa (Keller+EG+OG1)
@@ -6358,28 +6784,40 @@ function getIslandGroundHeight(px, py, pz) {
     const villaZ = 25;
     const VW = 28, VD = 22;
     const inVillaX = px > villaX - VW / 2 && px < villaX + VW / 2;
-    const inVillaZ = pz > villaZ - VD / 2 && pz < villaZ + VD / 2 + 3;
+    const inVillaZ = pz > villaZ - VD / 2 && pz < villaZ + VD / 2;
     
     if (inVillaX && inVillaZ) {
-        // Villa floors: Keller=-1.7, EG=2.3, OG1=6.3
-        const vFloors = [-1.7, 2.3, 6.3];
-        for (let i = vFloors.length - 1; i >= 0; i--) {
-            if (py >= vFloors[i] - 0.5) {
-                ground = vFloors[i];
-                break;
-            }
+        // Villa floors (world-space): Keller=-1.85, EG=2.15, OG1=6.15
+        const vFloor0 = -1.85;
+        const vFloor1 = 2.15;
+        const vFloor2 = 6.15;
+        if (feetY >= vFloor2 - 0.3) {
+            ground = vFloor2;
+        } else if (feetY >= vFloor1 - 0.3) {
+            ground = vFloor1;
+        } else {
+            ground = vFloor0;
         }
         // Villa stairs
         const vStairX = villaX + VW / 2 - 2;
         if (px > vStairX - 3 && px < vStairX + 1) {
-            const stairProgress = (pz - (villaZ - VD / 2)) / VD;
+            const stairStartZ = villaZ - VD / 2 + 1.5;
+            const stairRun = 0.9 * 10;
+            const stairProgress = (pz - stairStartZ) / stairRun;
             const cp = Math.max(0, Math.min(1, stairProgress));
-            if (py < 2.3 && py >= -1.8) {
-                ground = -1.7 + cp * 4;
-            } else if (py < 6.3 && py >= 2.0) {
-                ground = 2.3 + cp * 4;
+            if (feetY < vFloor1 - 0.2) {
+                ground = vFloor0 + cp * 4;
+            } else if (feetY < vFloor2 - 0.2) {
+                ground = vFloor1 + cp * 4;
             }
         }
+    } else {
+        const onVillaVeranda =
+            px > villaX - (VW / 2 + 2) &&
+            px < villaX + (VW / 2 + 2) &&
+            pz >= villaZ + VD / 2 &&
+            pz <= villaZ + VD / 2 + 5;
+        if (onVillaVeranda) ground = 2.15;
     }
     
     return ground;
@@ -6387,13 +6825,11 @@ function getIslandGroundHeight(px, py, pz) {
 
 // Gebäude-Kollision prüfen
 function checkBuildingCollision(x, z) {
-    const playerRadius = 1.0; // Spieler-Radius für Kollision
-    
     for (const collider of buildingColliders) {
-        if (x + playerRadius > collider.minX && 
-            x - playerRadius < collider.maxX &&
-            z + playerRadius > collider.minZ && 
-            z - playerRadius < collider.maxZ) {
+        if (x + PLAYER_RADIUS > collider.minX && 
+            x - PLAYER_RADIUS < collider.maxX &&
+            z + PLAYER_RADIUS > collider.minZ && 
+            z - PLAYER_RADIUS < collider.maxZ) {
             return true; // Kollision!
         }
     }
@@ -6415,8 +6851,9 @@ function updateBoat() {
             boatMoving = false;
             playerOnBoat = false;
             // Spieler auf Insel-Dock absetzen
-            player.position.set(BOAT_ISLAND_X, 6, 5);
-            camera.position.set(BOAT_ISLAND_X, 6, 5);
+            const islandDockY = getIslandGroundHeight(BOAT_ISLAND_X, GROUND_LEVEL, 5) + GROUND_LEVEL;
+            player.position.set(BOAT_ISLAND_X, islandDockY, 5);
+            camera.position.set(BOAT_ISLAND_X, islandDockY, 5);
             showMessage('Willkommen auf der Insel! Geh ins Haus! 🏝️');
         }
     } else {
@@ -6444,7 +6881,7 @@ function updateBoat() {
     }
 
     // Boot schaukelt
-    const time = Date.now() * 0.001;
+    const time = gameTime;
     boat.position.y = 1 + Math.sin(time * 2) * 0.15;
     boat.rotation.z = Math.sin(time * 1.5) * 0.03;
     boat.rotation.x = Math.sin(time * 1.8) * 0.02;
@@ -6511,7 +6948,7 @@ function updatePolice() {
 // ANIMATIONEN
 // ==========================================
 function updateAliens() {
-    const time = Date.now() * 0.002;
+    const time = gameTime * 2;
     aliens.forEach(alien => {
         if (alien.visible && !alien.userData.collected) {
             // Kinder laufen leicht herum
@@ -6550,7 +6987,7 @@ function updateAliens() {
 }
 
 function updateWater() {
-    const time = Date.now() * 0.0005;
+    const time = gameTime * 0.5;
     const positions = water.geometry.attributes.position;
     
     for (let i = 0; i < positions.count; i++) {
@@ -6560,6 +6997,12 @@ function updateWater() {
         positions.setZ(i, wave);
     }
     positions.needsUpdate = true;
+
+    if (water.material && water.material.bumpMap) {
+        water.material.bumpMap.offset.x = time * 0.02;
+        water.material.bumpMap.offset.y = time * 0.015;
+        water.material.bumpMap.needsUpdate = true;
+    }
 }
 
 function updateCamera() {
@@ -6581,12 +7024,10 @@ function updateCamera() {
 // ==========================================
 // ANIMATIONS-LOOP
 // ==========================================
-function animate() {
-    requestAnimationFrame(animate);
-
-    const deltaTime = clock.getDelta();
-
+function stepGame(deltaTime) {
     if (gameState === 'playing') {
+        gameTime += deltaTime;
+        updateDayNightCycle();
         updatePlayer(deltaTime);
         updateBoat();
         updatePolice();
@@ -6600,6 +7041,13 @@ function animate() {
     }
 
     updateCamera();
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const deltaTime = clock.getDelta();
+    stepGame(deltaTime);
     renderer.render(scene, camera);
 }
 
@@ -6714,12 +7162,29 @@ function updateNPCs() {
             npc.userData.walkTimer += 0.15;
         }
         
+        const walkPhase = npc.userData.walkTimer || 0;
+        const swing = Math.sin(walkPhase * 2.4 + (npc.userData.walkPhase || 0)) * 0.6;
+        const limbs = npc.userData.limbs;
+        if (limbs && limbs.arms && limbs.legs) {
+            limbs.arms.forEach((arm, idx) => {
+                const dir = idx === 0 ? 1 : -1;
+                arm.upper.rotation.x = swing * dir * 0.4;
+                arm.lower.rotation.x = swing * dir * 0.2;
+            });
+            limbs.legs.forEach((leg, idx) => {
+                const dir = idx === 0 ? -1 : 1;
+                leg.upper.rotation.x = swing * dir * 0.5;
+                leg.lower.rotation.x = swing * dir * 0.3;
+            });
+        }
+
         // Im Bereich bleiben
         npc.position.x = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, npc.position.x));
         npc.position.z = Math.max(-CITY_BOUND, Math.min(CITY_BOUND, npc.position.z));
         // Terrain-Höhe + Lauf-Animation
-        const walkBob = Math.abs(Math.sin(npc.userData.walkTimer || 0)) * 0.05;
-        npc.position.y = getTerrainHeightAt(npc.position.x, npc.position.z) + 0.1 + walkBob;
+        const walkBob = Math.abs(Math.sin(walkPhase)) * 0.06;
+        const npcScale = npc.userData.scale || 1;
+        npc.position.y = getTerrainHeightAt(npc.position.x, npc.position.z) + 0.1 * npcScale + walkBob;
     });
 }
 
@@ -6727,7 +7192,7 @@ function updateNPCs() {
 // TIER UPDATE
 // ==========================================
 function updateAnimals() {
-    const time = clock.elapsedTime;
+    const time = gameTime;
     
     animals.forEach(animal => {
         if (animal.userData.type === 'bird') {
@@ -6780,6 +7245,71 @@ function updateAnimals() {
         }
     });
 }
+
+// ==========================================
+// TEST / DEBUG HOOKS
+// ==========================================
+function renderGameToText() {
+    if (!player) {
+        return JSON.stringify({ mode: gameState, note: 'player not initialized' });
+    }
+    updateInsideHouseStatus();
+    const dayPhase = (gameTime % DAY_LENGTH) / DAY_LENGTH;
+    const round = (value) => Math.round(value * 10) / 10;
+    const visibleAliens = aliens
+        .filter(alien => alien.visible && !alien.userData.collected)
+        .slice(0, 6)
+        .map(alien => ({
+            x: round(alien.position.x),
+            y: round(alien.position.y),
+            z: round(alien.position.z)
+        }));
+
+    const insideVilla = isInsideVillaBounds(player.position.x, player.position.z, 0.4);
+
+    const payload = {
+        mode: gameState,
+        coords: 'x,z auf Bodenebene; y nach oben; Einheiten ~Meter',
+        player: {
+            x: round(player.position.x),
+            y: round(player.position.y),
+            z: round(player.position.z),
+            yaw: round(yaw),
+            pitch: round(pitch)
+        },
+        onIsland: isOnIsland(),
+        timeOfDay: Math.round(dayPhase * 100) / 100,
+        insideHouse,
+        insideVilla,
+        collectedAliens,
+        deliveredAliens,
+        totalAliens: TOTAL_ALIENS,
+        boat: boat
+            ? {
+                  x: round(boat.position.x),
+                  y: round(boat.position.y),
+                  z: round(boat.position.z),
+                  moving: boatMoving,
+                  direction: boatDirection
+              }
+            : null,
+        aliensVisible: visibleAliens,
+        policeNearby: police.some(cop => cop.position.distanceTo(player.position) < 20)
+    };
+
+    return JSON.stringify(payload);
+}
+
+window.render_game_to_text = renderGameToText;
+
+window.advanceTime = (ms) => {
+    const step = 1 / 60;
+    const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+    for (let i = 0; i < steps; i++) {
+        stepGame(step);
+    }
+    renderer.render(scene, camera);
+};
 
 // ==========================================
 // SPIEL STARTEN
